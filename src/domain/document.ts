@@ -100,6 +100,29 @@ export function normalizeNodeTitle(value: string): string {
   return value.trim();
 }
 
+export function countUserVisibleCharacters(value: string): number {
+  if (typeof Intl.Segmenter === 'function') {
+    return Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(value)).length;
+  }
+
+  return Array.from(value).length;
+}
+
+export function takeUserVisibleCharacters(value: string, maximum: number): string {
+  if (countUserVisibleCharacters(value) <= maximum) {
+    return value;
+  }
+
+  if (typeof Intl.Segmenter === 'function') {
+    return Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(value))
+      .slice(0, maximum)
+      .map((segment) => segment.segment)
+      .join('');
+  }
+
+  return Array.from(value).slice(0, maximum).join('');
+}
+
 export function getVisibleNodes(root: QuickMindNode): QuickMindNode[] {
   const visible: QuickMindNode[] = [];
 

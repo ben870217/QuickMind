@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CURRENT_SCHEMA_VERSION, DEFAULT_DOCUMENT_TITLE, createQuickMindDocument } from './document';
+import {
+  countUserVisibleCharacters,
+  CURRENT_SCHEMA_VERSION,
+  DEFAULT_DOCUMENT_TITLE,
+  createQuickMindDocument,
+  takeUserVisibleCharacters,
+} from './document';
 
 describe('createQuickMindDocument', () => {
   it('creates one identified root node with the default title', () => {
@@ -23,5 +29,12 @@ describe('createQuickMindDocument', () => {
         children: [],
       },
     });
+  });
+
+  it('counts and truncates user-visible graphemes without splitting emoji', () => {
+    const title = 'A👩‍💻é';
+
+    expect(countUserVisibleCharacters(title)).toBe(3);
+    expect(takeUserVisibleCharacters(title, 2)).toBe('A👩‍💻');
   });
 });

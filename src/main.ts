@@ -55,7 +55,7 @@ function renderState(): void {
 function renderPersistenceState(): void {
   const state = workflow.getState();
   updateStatus(state);
-  const persistenceBadge = workspaceElement.querySelectorAll<HTMLElement>('.workspace-badge')[1];
+  const persistenceBadge = workspaceElement.querySelector<HTMLElement>('[data-status-badge="persistence"]');
   if (persistenceBadge) {
     persistenceBadge.textContent = state.persistence === 'error' ? '未保存到本機' : state.persistence === 'saved' ? '已保存到本機' : '保存中';
   }
@@ -75,6 +75,21 @@ window.addEventListener('online', () => {
 window.addEventListener('offline', () => {
   workflow.setConnectivity('offline');
   renderState();
+});
+
+const flushBeforePageHide = (): void => {
+  try {
+    void workflow.flushSave();
+  } catch {
+    // The app may be hiding before the asynchronous workspace bootstrap completes.
+  }
+};
+
+window.addEventListener('pagehide', flushBeforePageHide);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    flushBeforePageHide();
+  }
 });
 
 void workflow.start().then(renderState).catch(() => {

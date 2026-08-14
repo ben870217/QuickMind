@@ -1,20 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { createQuickMindDocument } from '../domain/document';
 import type { QuickMindDocument } from '../domain/document';
-import type { WorkspaceStore } from '../persistence/workspace-store';
+import type { WorkspaceSnapshot, WorkspaceStore } from '../persistence/workspace-store';
 import { DocumentWorkflow, MAX_HISTORY_ENTRIES } from './document-workflow';
 
 class MemoryWorkspaceStore implements WorkspaceStore {
   document: QuickMindDocument | null = null;
+  metadata = { hasUnexportedChanges: true };
   saveCount = 0;
 
-  async load(): Promise<QuickMindDocument | null> {
-    return this.document ? structuredClone(this.document) : null;
+  async load(): Promise<WorkspaceSnapshot | null> {
+    return this.document
+      ? { document: structuredClone(this.document), metadata: structuredClone(this.metadata) }
+      : null;
   }
 
-  async save(document: QuickMindDocument): Promise<void> {
+  async save(document: QuickMindDocument, metadata = { hasUnexportedChanges: true }): Promise<void> {
     this.saveCount += 1;
     this.document = structuredClone(document);
+    this.metadata = structuredClone(metadata);
   }
 
   async clear(): Promise<void> {
@@ -54,6 +58,8 @@ describe('DocumentWorkflow', () => {
     expect(state.persistence).toBe('saved');
     expect(state.document.meta.id).toBe('new-document');
     expect(state.document.root.text).toBe('未命名心智圖');
+    expect(state.selectionId).toBe('new-root');
+    expect(state.editing).toEqual({ nodeId: 'new-root', originalText: '未命名心智圖', isNew: false });
     expect(store.saveCount).toBe(1);
   });
 
@@ -77,7 +83,54 @@ describe('DocumentWorkflow', () => {
     expect(state.restored).toBe(true);
     expect(state.persistence).toBe('saved');
     expect(state.document.meta.id).toBe('saved-document');
+    expect(state.hasUnexportedChanges).toBe(true);
     expect(store.saveCount).toBe(0);
+  });
+
+  it('flushes a debounced document save before the page leaves', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      saveDelayMs: 10_000,
+    });
+    await workflow.start();
+
+    workflow.commitTitle('待保存');
+    expect(store.saveCount).toBe(1);
+
+    await workflow.flushSave();
+
+    expect(store.saveCount).toBe(2);
+    expect(store.document?.root.text).toBe('待保存');
+  });
+
+  it('persists the native export state separately from the document', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+    });
+    await workflow.start();
+
+    workflow.markExported();
+    await workflow.flushSave();
+
+    const reopened = new DocumentWorkflow(store, {
+      createDocument: () => {
+        throw new Error('an existing workspace must be restored');
+      },
+    });
+    const state = await reopened.start();
+
+    expect(state.hasUnexportedChanges).toBe(false);
+    expect(state.document.meta.id).toBe('document-id');
   });
 
   it('reports the current connectivity without changing the document', async () => {
@@ -525,7 +578,7 @@ describe('DocumentWorkflow', () => {
     const after = workflow.getState();
     expect(after.document).toEqual(before.document);
     expect(after.document.meta.updatedAt).toBe(before.document.meta.updatedAt);
-    expect(after.editing).toBeNull();
+    expect(after.editing?.nodeId).toBe('root-id');
     expect(after.canUndo).toBe(false);
     expect(after.limitError?.reason).toBe('node-count');
     expect(after.limitError?.nodeCount).toBe(10_001);

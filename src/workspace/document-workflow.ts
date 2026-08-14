@@ -1,5 +1,6 @@
 import {
   createQuickMindDocument,
+  countUserVisibleCharacters,
   findNode,
   findNodeLocation,
   getVisibleNodes,
@@ -80,13 +81,15 @@ export class DocumentWorkflow {
   private redoStack: HistoryEntry[] = [];
   private pendingEditBefore: QuickMindDocument | null = null;
   private readonly listeners = new Set<() => void>();
+  private saveInFlight: Promise<void> | null = null;
+  private saveQueued = false;
 
   constructor(
     private readonly store: WorkspaceStore,
     options: DocumentWorkflowOptions = {},
   ) {
     this.createDocument = options.createDocument ?? (() => createQuickMindDocument());
-    this.initialConnectivity = options.initialConnectivity ?? 'online';
+    this.initialConnectivity = options.initialConnectivity ?? (globalThis.navigator?.onLine === false ? 'offline' : 'online');
     this.createId = options.createId ?? (() => globalThis.crypto.randomUUID());
     this.now = options.now ?? (() => new Date().toISOString());
     this.saveDelayMs = options.saveDelayMs ?? 500;
@@ -99,9 +102,11 @@ export class DocumentWorkflow {
     this.undoStack = [];
     this.redoStack = [];
     this.pendingEditBefore = null;
-    const savedDocument = await this.store.load();
+    this.saveQueued = false;
+    const savedSnapshot = await this.store.load();
 
-    if (savedDocument) {
+    if (savedSnapshot) {
+      const savedDocument = savedSnapshot.document;
       this.state = {
         document: savedDocument,
         persistence: 'saved',
@@ -109,7 +114,7 @@ export class DocumentWorkflow {
         restored: true,
         selectionId: null,
         editing: null,
-        hasUnexportedChanges: true,
+        hasUnexportedChanges: savedSnapshot.metadata.hasUnexportedChanges,
         limitError: this.getDocumentLimitError(savedDocument),
       };
 
@@ -122,14 +127,18 @@ export class DocumentWorkflow {
       persistence: 'saving',
       connectivity: this.initialConnectivity,
       restored: false,
-      selectionId: null,
-      editing: null,
+      selectionId: document.root.id,
+      editing: {
+        nodeId: document.root.id,
+        originalText: document.root.text,
+        isNew: false,
+      },
       hasUnexportedChanges: true,
       limitError: null,
     };
 
     try {
-      await this.store.save(document);
+      await this.store.save(document, { hasUnexportedChanges: true });
       this.state.persistence = 'saved';
       this.saveRetryIndex = 0;
     } catch {
@@ -181,6 +190,26 @@ export class DocumentWorkflow {
   markExported(): WorkspaceState {
     const state = this.requireState();
     state.hasUnexportedChanges = false;
+    state.persistence = 'saving';
+    this.clearSaveTimer();
+    this.saveRetryIndex = 0;
+    void this.persistCurrentDocument();
+
+    return this.getState();
+  }
+
+  async flushSave(): Promise<WorkspaceState> {
+    const state = this.requireState();
+    this.clearSaveTimer();
+
+    if (state.persistence === 'saving') {
+      this.saveRetryIndex = 0;
+      void this.persistCurrentDocument();
+    }
+
+    while (this.saveInFlight) {
+      await this.saveInFlight;
+    }
 
     return this.getState();
   }
@@ -221,14 +250,18 @@ export class DocumentWorkflow {
     state.persistence = 'saving';
     state.connectivity = this.initialConnectivity;
     state.restored = false;
-    state.selectionId = null;
-    state.editing = null;
+    state.selectionId = document.root.id;
+    state.editing = {
+      nodeId: document.root.id,
+      originalText: document.root.text,
+      isNew: false,
+    };
     state.hasUnexportedChanges = true;
     state.limitError = null;
     this.saveRetryIndex = 0;
 
     try {
-      await this.store.save(document);
+      await this.store.save(document, { hasUnexportedChanges: true });
       state.persistence = 'saved';
       this.saveRetryIndex = 0;
     } catch {
@@ -342,7 +375,7 @@ export class DocumentWorkflow {
     }
 
     const normalized = normalizeNodeTitle(value);
-    if (normalized.length > MAX_NODE_TITLE_LENGTH) {
+    if (countUserVisibleCharacters(normalized) > MAX_NODE_TITLE_LENGTH) {
       return false;
     }
 
@@ -798,11 +831,31 @@ export class DocumentWorkflow {
     }
   }
 
-  private async persistCurrentDocument(): Promise<void> {
+  private persistCurrentDocument(): Promise<void> {
+    if (this.saveInFlight) {
+      this.saveQueued = true;
+      return this.saveInFlight;
+    }
+
+    const operation = this.persistCurrentDocumentInternal();
+    this.saveInFlight = operation;
+    void operation.finally(() => {
+      if (this.saveInFlight === operation) {
+        this.saveInFlight = null;
+        if (this.saveQueued) {
+          this.saveQueued = false;
+          void this.persistCurrentDocument();
+        }
+      }
+    });
+    return operation;
+  }
+
+  private async persistCurrentDocumentInternal(): Promise<void> {
     const state = this.requireState();
 
     try {
-      await this.store.save(state.document);
+      await this.store.save(state.document, { hasUnexportedChanges: state.hasUnexportedChanges });
       state.persistence = 'saved';
       this.saveRetryIndex = 0;
       this.notify();
