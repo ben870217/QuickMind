@@ -1,0 +1,68 @@
+services:
+  dev:
+    build:
+      context: .
+      target: development
+    init: true
+    environment:
+      VITE_BASE_PATH: /
+    ports:
+      - "${QUICKMIND_DEV_PORT:-5173}:5173"
+    networks:
+      default:
+        aliases:
+          - quickmind
+    volumes:
+      - .:/app
+      - quickmind_node_modules:/app/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:5173/ || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  check:
+    build:
+      context: .
+      target: check
+      args:
+        VITE_BASE_PATH: ${VITE_BASE_PATH:-/}
+    init: true
+    environment:
+      VITE_BASE_PATH: ${VITE_BASE_PATH:-/}
+    volumes:
+      - .:/app
+      - quickmind_node_modules:/app/node_modules
+      - ./dist:/app/dist
+    command: ["sh", "-c", "npm run typecheck && npm run test:run && npm run build"]
+
+  e2e:
+    build:
+      context: .
+      target: e2e
+    init: true
+    depends_on:
+      dev:
+        condition: service_healthy
+    environment:
+      BASE_URL: http://quickmind:5173
+    volumes:
+      - .:/app
+      - quickmind_e2e_node_modules:/app/node_modules
+    command: ["npm", "run", "test:e2e"]
+
+  preview:
+    profiles: [preview]
+    build:
+      context: .
+      target: preview
+      args:
+        VITE_BASE_PATH: ${VITE_BASE_PATH:-/}
+    init: true
+    ports:
+      - "${QUICKMIND_PREVIEW_PORT:-4173}:4173"
+
+volumes:
+  quickmind_node_modules:
+  quickmind_e2e_node_modules:

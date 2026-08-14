@@ -1,0 +1,79 @@
+name: QuickMind CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quickmind-pages
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Docker Compose checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Run typecheck, tests, and build in Docker
+        env:
+          VITE_BASE_PATH: /QuickMind/
+        run: docker compose run --rm check
+
+      - name: Start the Docker development server
+        run: docker compose up -d dev
+
+      - name: Run Chromium E2E in Docker
+        run: docker compose run --rm e2e
+
+      - name: Configure GitHub Pages
+        if: success()
+        uses: actions/configure-pages@v5
+
+      - name: Upload the verified static artifact
+        if: success()
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./dist
+
+      - name: Stop Docker Compose services
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  container:
+    name: Build preview image
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build the Docker preview image
+        env:
+          VITE_BASE_PATH: /QuickMind/
+        run: docker compose --profile preview build preview
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - verify
+      - container
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the verified artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
