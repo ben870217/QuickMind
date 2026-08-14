@@ -9,85 +9,71 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: quickmind-pages
+  cancel-in-progress: true
+
 jobs:
   verify:
-    name: Build and test
+    name: Docker Compose checks
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Run typecheck, tests, and build in Docker
+        env:
+          VITE_BASE_PATH: /QuickMind/
+        run: docker compose run --rm check
+
+      - name: Start the Docker development server
+        run: docker compose up -d dev
+
+      - name: Run Chromium E2E in Docker
+        run: docker compose run --rm e2e
+
+      - name: Configure GitHub Pages
+        if: success()
+        uses: actions/configure-pages@v5
+
+      - name: Upload the verified static artifact
+        if: success()
+        uses: actions/upload-pages-artifact@v4
         with:
-          node-version: 22
-          cache: npm
+          path: ./dist
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Run tests
-        run: npm run test:run
-
-      - name: Build static application
-        run: npm run build
-
-      - name: Install Chromium for smoke test
-        run: npx playwright install --with-deps chromium chromium-headless-shell
-
-      - name: Run Chromium smoke test
-        run: npm run test:e2e
+      - name: Stop Docker Compose services
+        if: always()
+        run: docker compose down --volumes --remove-orphans
 
   container:
-    name: Build Docker image
+    name: Build preview image
     needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Build container
-        run: docker build --tag quickmind:ci .
+      - name: Build the Docker preview image
+        env:
+          VITE_BASE_PATH: /QuickMind/
+        run: docker compose --profile preview build preview
 
-  publish:
-    name: Publish to GitLab Pages
+  deploy:
+    name: Deploy to GitHub Pages
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
       - verify
       - container
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Resolve GitLab Pages base path
-        id: pages
-        env:
-          GITLAB_PAGES_REPOSITORY: ${{ secrets.GITLAB_PAGES_REPOSITORY }}
-        run: |
-          project_path="${GITLAB_PAGES_REPOSITORY#*/}"
-          echo "base_path=/${project_path%/}/" >> "$GITHUB_OUTPUT"
-
-      - name: Build static application
-        env:
-          VITE_BASE_PATH: ${{ steps.pages.outputs.base_path }}
-        run: npm run build
-
-      - name: Publish static artifact to GitLab Pages project
-        env:
-          GITLAB_PAGES_REPOSITORY: ${{ secrets.GITLAB_PAGES_REPOSITORY }}
-          GITLAB_PAGES_TOKEN: ${{ secrets.GITLAB_PAGES_TOKEN }}
-          GITLAB_PAGES_BRANCH: ${{ vars.GITLAB_PAGES_BRANCH }}
-        run: node scripts/publish-gitlab-pages.mjs
+      - name: Deploy the verified artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
