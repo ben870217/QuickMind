@@ -87,4 +87,100 @@ describe('DocumentWorkflow', () => {
     expect(offlineState.document).toEqual(state.document);
     expect(offlineState.persistence).toBe('saved');
   });
+
+  it('adds a child and commits a normalized title', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'child-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+      now: () => '2026-08-14T00:01:00.000Z',
+      saveDelayMs: 10_000,
+    });
+    const initial = await workflow.start();
+
+    const editing = workflow.addChild(initial.document.root.id);
+    expect(editing.editing).toEqual({ nodeId: 'child-id', originalText: '', isNew: true });
+
+    expect(workflow.commitTitle('  第一個想法  ')).toBe(true);
+    const state = workflow.getState();
+    expect(state.document.root.children[0]?.text).toBe('第一個想法');
+    expect(state.editing).toBeNull();
+    expect(state.selectionId).toBe('child-id');
+    expect(state.document.meta.updatedAt).toBe('2026-08-14T00:01:00.000Z');
+  });
+
+  it('cancels a new blank node without changing the document', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'child-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+      now: () => '2026-08-14T00:01:00.000Z',
+    });
+    const initial = await workflow.start();
+
+    workflow.addChild(initial.document.root.id);
+    expect(workflow.commitTitle('   ')).toBe(true);
+    const state = workflow.getState();
+
+    expect(state.document.root.children).toHaveLength(0);
+    expect(state.selectionId).toBe('root-id');
+    expect(state.editing).toBeNull();
+    expect(state.document.meta.updatedAt).toBe('2026-08-14T00:00:00.000Z');
+  });
+
+  it('rejects a title longer than the visible character limit', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'child-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+    });
+    const initial = await workflow.start();
+
+    workflow.addChild(initial.document.root.id);
+
+    expect(workflow.commitTitle('x'.repeat(201))).toBe(false);
+    expect(workflow.getState().editing?.nodeId).toBe('child-id');
+  });
+
+  it('adds a sibling after the selected node and never creates a second root', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'child-id', 'sibling-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+    });
+    const initial = await workflow.start();
+
+    const rootAttempt = workflow.addSibling(initial.document.root.id);
+    expect(rootAttempt.document.root.children).toHaveLength(0);
+
+    workflow.addChild(initial.document.root.id);
+    workflow.commitTitle('第一個想法');
+    const child = workflow.getState().document.root.children[0];
+    if (!child) {
+      throw new Error('Expected the first child to exist');
+    }
+
+    workflow.addSibling(child.id);
+    workflow.commitTitle('第二個想法');
+    expect(workflow.getState().document.root.children.map((node) => node.text)).toEqual([
+      '第一個想法',
+      '第二個想法',
+    ]);
+  });
 });

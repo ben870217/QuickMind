@@ -4,6 +4,7 @@ import { renderWorkspace } from './ui/workspace';
 import { DocumentWorkflow } from './workspace/document-workflow';
 import { IndexedDbWorkspaceStore } from './persistence/workspace-store';
 import { registerServiceWorker } from './platform/service-worker';
+import { bindWorkspaceInteractions } from './ui/workspace-interactions';
 
 const app = document.querySelector<HTMLElement>('#app');
 
@@ -31,6 +32,8 @@ function renderState(): void {
   renderWorkspace(workspaceElement, state);
   statusElement.textContent = state.connectivity === 'offline' ? '離線模式' : '已保存到本機';
 }
+
+bindWorkspaceInteractions(workspaceElement, workflow, renderState);
 
 window.addEventListener('online', () => {
   workflow.setConnectivity('online');

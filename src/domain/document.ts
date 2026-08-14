@@ -1,5 +1,6 @@
 export const DEFAULT_DOCUMENT_TITLE = '未命名心智圖';
 export const CURRENT_SCHEMA_VERSION = 1 as const;
+export const MAX_NODE_TITLE_LENGTH = 200;
 
 export interface QuickMindNode {
   id: string;
@@ -52,4 +53,49 @@ export function createQuickMindDocument(options: DocumentFactoryOptions = {}): Q
       children: [],
     },
   };
+}
+
+export interface NodeLocation {
+  node: QuickMindNode;
+  parent: QuickMindNode | null;
+  index: number;
+}
+
+export function findNode(root: QuickMindNode, nodeId: string): QuickMindNode | null {
+  if (root.id === nodeId) {
+    return root;
+  }
+
+  for (const child of root.children) {
+    const found = findNode(child, nodeId);
+    if (found) {
+      return found;
+    }
+  }
+
+  return null;
+}
+
+export function findNodeLocation(root: QuickMindNode, nodeId: string): NodeLocation | null {
+  if (root.id === nodeId) {
+    return { node: root, parent: null, index: 0 };
+  }
+
+  for (let index = 0; index < root.children.length; index += 1) {
+    const child = root.children[index];
+    if (child.id === nodeId) {
+      return { node: child, parent: root, index };
+    }
+
+    const found = findNodeLocation(child, nodeId);
+    if (found) {
+      return found;
+    }
+  }
+
+  return null;
+}
+
+export function normalizeNodeTitle(value: string): string {
+  return value.trim();
 }

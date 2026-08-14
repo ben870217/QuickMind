@@ -102,6 +102,57 @@ h1 {
   text-align: center;
 }
 
+.mindmap-tree,
+.mindmap-children {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mindmap-children {
+  margin: 0.75rem 0 0 1.5rem;
+  padding-left: 1rem;
+  border-left: 2px solid #dfd2c5;
+  text-align: left;
+}
+
+.mindmap-node {
+  min-width: 0;
+}
+
+.node-card,
+.node-editor {
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: 1px solid #cbb8ab;
+  border-radius: 0.75rem;
+  color: #453c39;
+  background: #fffaf4;
+  text-align: left;
+}
+
+.node-card {
+  cursor: pointer;
+}
+
+.node-card:hover,
+.node-card[aria-selected="true"] {
+  border-color: #9b8074;
+  background: #f8eee5;
+}
+
+.node-card:focus-visible,
+.node-editor:focus-visible {
+  outline: 3px solid #8ca89a;
+  outline-offset: 3px;
+}
+
+.node-editor {
+  display: block;
+}
+
 .node-kicker {
   margin-bottom: 0.75rem;
   color: #8b7369;

@@ -1,4 +1,12 @@
-import { createQuickMindDocument, type QuickMindDocument } from '../domain/document';
+import {
+  createQuickMindDocument,
+  findNode,
+  findNodeLocation,
+  MAX_NODE_TITLE_LENGTH,
+  normalizeNodeTitle,
+  type QuickMindDocument,
+  type QuickMindNode,
+} from '../domain/document';
 import type { WorkspaceStore } from '../persistence/workspace-store';
 
 export type PersistenceStatus = 'saving' | 'saved' | 'error';
@@ -9,17 +17,32 @@ export interface WorkspaceState {
   persistence: PersistenceStatus;
   connectivity: ConnectivityStatus;
   restored: boolean;
+  selectionId: string | null;
+  editing: EditingState | null;
+}
+
+export interface EditingState {
+  nodeId: string;
+  originalText: string;
+  isNew: boolean;
 }
 
 export interface DocumentWorkflowOptions {
   createDocument?: () => QuickMindDocument;
+  createId?: () => string;
+  now?: () => string;
   initialConnectivity?: ConnectivityStatus;
+  saveDelayMs?: number;
 }
 
 export class DocumentWorkflow {
   private state: WorkspaceState | null = null;
   private readonly createDocument: () => QuickMindDocument;
   private readonly initialConnectivity: ConnectivityStatus;
+  private readonly createId: () => string;
+  private readonly now: () => string;
+  private readonly saveDelayMs: number;
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly store: WorkspaceStore,
@@ -27,6 +50,9 @@ export class DocumentWorkflow {
   ) {
     this.createDocument = options.createDocument ?? (() => createQuickMindDocument());
     this.initialConnectivity = options.initialConnectivity ?? 'online';
+    this.createId = options.createId ?? (() => globalThis.crypto.randomUUID());
+    this.now = options.now ?? (() => new Date().toISOString());
+    this.saveDelayMs = options.saveDelayMs ?? 500;
   }
 
   async start(): Promise<WorkspaceState> {
@@ -38,6 +64,8 @@ export class DocumentWorkflow {
         persistence: 'saved',
         connectivity: this.initialConnectivity,
         restored: true,
+        selectionId: null,
+        editing: null,
       };
 
       return this.getState();
@@ -49,6 +77,8 @@ export class DocumentWorkflow {
       persistence: 'saving',
       connectivity: this.initialConnectivity,
       restored: false,
+      selectionId: null,
+      editing: null,
     };
 
     try {
@@ -63,6 +93,132 @@ export class DocumentWorkflow {
 
   setConnectivity(connectivity: ConnectivityStatus): WorkspaceState {
     this.requireState().connectivity = connectivity;
+
+    return this.getState();
+  }
+
+  selectNode(nodeId: string | null): WorkspaceState {
+    const state = this.requireState();
+
+    if (nodeId !== null && !findNode(state.document.root, nodeId)) {
+      throw new Error(`Node ${nodeId} does not exist`);
+    }
+
+    state.selectionId = nodeId;
+
+    return this.getState();
+  }
+
+  beginEditing(nodeId: string): WorkspaceState {
+    const state = this.requireState();
+    const node = findNode(state.document.root, nodeId);
+
+    if (!node) {
+      throw new Error(`Node ${nodeId} does not exist`);
+    }
+
+    state.selectionId = nodeId;
+    state.editing = {
+      nodeId,
+      originalText: node.text,
+      isNew: false,
+    };
+
+    return this.getState();
+  }
+
+  addChild(parentId: string): WorkspaceState {
+    const state = this.requireState();
+    const parent = findNode(state.document.root, parentId);
+
+    if (!parent) {
+      throw new Error(`Node ${parentId} does not exist`);
+    }
+
+    const node = this.createEmptyNode();
+    parent.children.push(node);
+    state.selectionId = node.id;
+    state.editing = {
+      nodeId: node.id,
+      originalText: '',
+      isNew: true,
+    };
+
+    return this.getState();
+  }
+
+  addSibling(nodeId: string): WorkspaceState {
+    const state = this.requireState();
+    const location = findNodeLocation(state.document.root, nodeId);
+
+    if (!location?.parent) {
+      return this.getState();
+    }
+
+    const node = this.createEmptyNode();
+    location.parent.children.splice(location.index + 1, 0, node);
+    state.selectionId = node.id;
+    state.editing = {
+      nodeId: node.id,
+      originalText: '',
+      isNew: true,
+    };
+
+    return this.getState();
+  }
+
+  commitTitle(value: string): boolean {
+    const state = this.requireState();
+    const editing = state.editing;
+
+    if (!editing) {
+      return false;
+    }
+
+    const normalized = normalizeNodeTitle(value);
+    if (normalized.length > MAX_NODE_TITLE_LENGTH) {
+      return false;
+    }
+
+    if (!normalized) {
+      if (editing.isNew) {
+        this.removePendingNode(editing.nodeId);
+        state.editing = null;
+        return true;
+      }
+
+      return false;
+    }
+
+    const node = findNode(state.document.root, editing.nodeId);
+    if (!node) {
+      throw new Error(`Node ${editing.nodeId} does not exist`);
+    }
+
+    const changed = node.text !== normalized;
+    node.text = normalized;
+    state.editing = null;
+
+    if (changed) {
+      this.markChanged();
+    }
+
+    return true;
+  }
+
+  cancelEditing(): WorkspaceState {
+    const state = this.requireState();
+    const editing = state.editing;
+
+    if (!editing) {
+      return this.getState();
+    }
+
+    if (editing.isNew) {
+      this.removePendingNode(editing.nodeId);
+    }
+
+    state.editing = null;
 
     return this.getState();
   }
@@ -82,5 +238,55 @@ export class DocumentWorkflow {
     }
 
     return this.state;
+  }
+
+  private createEmptyNode(): QuickMindNode {
+    return {
+      id: this.createId(),
+      text: '',
+      isCollapsed: false,
+      children: [],
+    };
+  }
+
+  private removePendingNode(nodeId: string): void {
+    const state = this.requireState();
+    const location = findNodeLocation(state.document.root, nodeId);
+
+    if (!location?.parent) {
+      throw new Error('The root node cannot be removed as a pending node');
+    }
+
+    location.parent.children.splice(location.index, 1);
+    state.selectionId = location.parent.id;
+  }
+
+  private markChanged(): void {
+    const state = this.requireState();
+    state.document.meta.updatedAt = this.now();
+    state.persistence = 'saving';
+    this.scheduleSave();
+  }
+
+  private scheduleSave(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+    }
+
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      void this.persistCurrentDocument();
+    }, this.saveDelayMs);
+  }
+
+  private async persistCurrentDocument(): Promise<void> {
+    const state = this.requireState();
+
+    try {
+      await this.store.save(state.document);
+      state.persistence = 'saved';
+    } catch {
+      state.persistence = 'error';
+    }
   }
 }
