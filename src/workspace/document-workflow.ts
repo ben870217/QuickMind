@@ -168,6 +168,13 @@ export class DocumentWorkflow {
       state.limitError = this.getDocumentLimitError(document);
       return false;
     }
+
+    if (state.editing?.isNew) {
+      this.removePendingNode(state.editing.nodeId);
+      state.editing = null;
+      this.pendingEditBefore = null;
+    }
+
     if (JSON.stringify(state.document) === JSON.stringify(document)) {
       return false;
     }

@@ -569,6 +569,34 @@ describe('DocumentWorkflow', () => {
     expect(redone.hasUnexportedChanges).toBe(false);
   });
 
+  it('does not put an uncommitted blank node into import history', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'child-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+    });
+    const initial = await workflow.start();
+    workflow.addChild(initial.document.root.id);
+
+    const imported = createQuickMindDocument({
+      createId: (() => {
+        const importedIds = ['imported-document-id', 'imported-root-id'];
+        return () => importedIds.shift() ?? 'unused';
+      })(),
+      now: () => '2026-08-14T00:01:00.000Z',
+    });
+    imported.root.text = '匯入文件';
+
+    expect(workflow.replaceDocument(imported)).toBe(true);
+    const undone = workflow.undo();
+    expect(undone.document.root.children).toHaveLength(0);
+    expect(undone.editing).toBeNull();
+  });
+
   it('rejects a node addition over the 10,000-node limit atomically', async () => {
     const store = new MemoryWorkspaceStore();
     const root = {
