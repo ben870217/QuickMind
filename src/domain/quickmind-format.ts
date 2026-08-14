@@ -1,7 +1,9 @@
 import {
   CURRENT_SCHEMA_VERSION,
   MAX_NODE_TITLE_LENGTH,
+  countUserVisibleCharacters,
   normalizeNodeTitle,
+  takeUserVisibleCharacters,
   type QuickMindDocument,
   type QuickMindNode,
 } from './document';
@@ -27,10 +29,20 @@ export type QuickMindFormatErrorCode =
   | 'node-limit'
   | 'file-size-limit';
 
+export interface QuickMindFormatErrorDetails {
+  requestedVersion?: unknown;
+  supportedVersion?: number;
+  byteLength?: number;
+  maxBytes?: number;
+  nodeCount?: number;
+  maxNodes?: number;
+}
+
 export class QuickMindFormatError extends Error {
   constructor(
     readonly code: QuickMindFormatErrorCode,
     readonly path: string,
+    readonly details: QuickMindFormatErrorDetails = {},
   ) {
     super(`${code} at ${path}`);
     this.name = 'QuickMindFormatError';
@@ -101,9 +113,18 @@ export function validateQuickMindDocument(value: unknown): QuickMindDocument {
     throw new QuickMindFormatError('invalid-schema', '$');
   }
 
+  if (!Object.prototype.hasOwnProperty.call(value.meta, 'schemaVersion')) {
+    throw new QuickMindFormatError('unsupported-version', '$.meta.schemaVersion', {
+      requestedVersion: undefined,
+      supportedVersion: CURRENT_SCHEMA_VERSION,
+    });
+  }
   assertExactKeys(value.meta, ['id', 'schemaVersion', 'createdAt', 'updatedAt'], '$.meta');
   if (value.meta.schemaVersion !== CURRENT_SCHEMA_VERSION) {
-    throw new QuickMindFormatError('unsupported-version', '$.meta.schemaVersion');
+    throw new QuickMindFormatError('unsupported-version', '$.meta.schemaVersion', {
+      requestedVersion: value.meta.schemaVersion,
+      supportedVersion: CURRENT_SCHEMA_VERSION,
+    });
   }
 
   const documentId = readUuid(value.meta.id, '$.meta.id');
@@ -115,7 +136,10 @@ export function validateQuickMindDocument(value: unknown): QuickMindDocument {
   const root = validateNode(value.root, '$.root', ids, () => {
     nodeCount += 1;
     if (nodeCount > MAX_QUICKMIND_NODE_COUNT) {
-      throw new QuickMindFormatError('node-limit', '$.root');
+      throw new QuickMindFormatError('node-limit', '$.root', {
+        nodeCount,
+        maxNodes: MAX_QUICKMIND_NODE_COUNT,
+      });
     }
   });
 
@@ -140,7 +164,7 @@ export function createQuickMindFilename(rootTitle: string): string {
     base = base.slice(0, -FILENAME_EXTENSION.length).replace(/\.+$/g, '');
   }
 
-  base = Array.from(base).slice(0, 100).join('').replace(/^\.+|\.+$/g, '');
+  base = takeUserVisibleCharacters(base, 100).replace(/^\.+|\.+$/g, '');
   if (!base) {
     base = '未命名心智圖';
   }
@@ -169,7 +193,7 @@ function validateNode(
   }
   ids.add(id);
 
-  if (typeof value.text !== 'string' || normalizeNodeTitle(value.text) !== value.text || !value.text || Array.from(value.text).length > MAX_NODE_TITLE_LENGTH) {
+  if (typeof value.text !== 'string' || normalizeNodeTitle(value.text) !== value.text || !value.text || countUserVisibleCharacters(value.text) > MAX_NODE_TITLE_LENGTH) {
     throw new QuickMindFormatError('invalid-node', `${path}.text`);
   }
   if (typeof value.isCollapsed !== 'boolean' || !Array.isArray(value.children)) {
@@ -203,8 +227,12 @@ function readUtcTime(value: unknown, path: string): string {
 }
 
 function assertFileSize(source: string): void {
-  if (new TextEncoder().encode(source).byteLength > MAX_QUICKMIND_FILE_BYTES) {
-    throw new QuickMindFormatError('file-size-limit', '$');
+  const byteLength = new TextEncoder().encode(source).byteLength;
+  if (byteLength > MAX_QUICKMIND_FILE_BYTES) {
+    throw new QuickMindFormatError('file-size-limit', '$', {
+      byteLength,
+      maxBytes: MAX_QUICKMIND_FILE_BYTES,
+    });
   }
 }
 

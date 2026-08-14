@@ -1,8 +1,11 @@
 const CACHE_NAME = 'quickmind-shell-v1';
+const BASE_URL = new URL('./', self.registration.scope);
+const INDEX_URL = new URL('index.html', BASE_URL).toString();
+const OFFLINE_URL = new URL('offline.html', BASE_URL).toString();
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(['/', '/index.html'])),
+    caches.open(CACHE_NAME).then((cache) => cache.addAll([BASE_URL.toString(), INDEX_URL, OFFLINE_URL])),
   );
   self.skipWaiting();
 });
@@ -28,6 +31,6 @@ self.addEventListener('fetch', (event) => {
       const copy = response.clone();
       void caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
       return response;
-    }).catch(() => caches.match('/index.html'))),
+    }).catch(() => event.request.mode === 'navigate' ? caches.match(OFFLINE_URL) : Response.error())),
   );
 });

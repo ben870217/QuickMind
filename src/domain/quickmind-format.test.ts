@@ -60,6 +60,16 @@ describe('QuickMind native format', () => {
 
     const unsupportedVersion = serializeQuickMindDocument(documentFixture).replace('"schemaVersion": 1', '"schemaVersion": 2');
     expect(() => parseQuickMindDocument(unsupportedVersion)).toThrow('unsupported-version at $.meta.schemaVersion');
+    try {
+      parseQuickMindDocument(unsupportedVersion);
+    } catch (error) {
+      expect(error).toBeInstanceOf(QuickMindFormatError);
+      expect((error as QuickMindFormatError).details).toMatchObject({ requestedVersion: 2, supportedVersion: 1 });
+    }
+
+    const missingVersion = JSON.parse(JSON.stringify(documentFixture)) as { meta: Record<string, unknown> };
+    delete missingVersion.meta.schemaVersion;
+    expect(() => parseQuickMindDocument(JSON.stringify(missingVersion))).toThrow('unsupported-version at $.meta.schemaVersion');
 
     const invalidId = serializeQuickMindDocument(documentFixture).replace(
       '00000000-0000-4000-8000-000000000002',
@@ -81,7 +91,14 @@ describe('QuickMind native format', () => {
     }));
     const tooManyNodes = structuredClone(documentFixture);
     tooManyNodes.root.children = children;
-    expect(() => serializeQuickMindDocument(tooManyNodes)).toThrow('node-limit at $.root');
+    let nodeLimitError: unknown;
+    try {
+      serializeQuickMindDocument(tooManyNodes);
+    } catch (error) {
+      nodeLimitError = error;
+    }
+    expect(nodeLimitError).toBeInstanceOf(QuickMindFormatError);
+    expect((nodeLimitError as QuickMindFormatError).details).toMatchObject({ nodeCount: 10_001, maxNodes: 10_000 });
   });
 
   it('creates safe lower-case filenames from root titles', () => {
