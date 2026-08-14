@@ -112,6 +112,36 @@ h1 {
   cursor: not-allowed;
 }
 
+.file-button {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #cbb8ab;
+  border-radius: 0.5rem;
+  color: #5f514a;
+  background: #fffaf4;
+  cursor: pointer;
+}
+
+.file-button:hover,
+.file-button:focus-visible {
+  border-color: #9b8074;
+  background: #f8eee5;
+}
+
+.file-button:focus-visible {
+  outline: 3px solid #8ca89a;
+  outline-offset: 2px;
+}
+
+.native-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .workspace-badge {
   padding: 0.35rem 0.7rem;
   border: 1px solid #d9d0c5;
@@ -119,6 +149,23 @@ h1 {
   color: #6f625c;
   background: rgba(255, 252, 248, 0.78);
   font-size: 0.8rem;
+}
+
+.file-message {
+  margin: 0 auto 1rem;
+  max-width: 52rem;
+  color: #6f625c;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.file-message[data-error="true"] {
+  color: #9b554d;
+}
+
+.file-message details {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
 }
 
 .root-node {

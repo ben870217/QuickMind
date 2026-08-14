@@ -1,4 +1,10 @@
 import { findNode, findNodeLocation } from '../domain/document';
+import {
+  createQuickMindFilename,
+  parseQuickMindDocument,
+  QuickMindFormatError,
+  serializeQuickMindDocument,
+} from '../domain/quickmind-format';
 import type { DocumentWorkflow, MovePosition } from '../workspace/document-workflow';
 
 export function bindWorkspaceInteractions(
@@ -136,6 +142,16 @@ export function bindWorkspaceInteractions(
 
   const onClick = (event: MouseEvent): void => {
     const target = event.target as HTMLElement;
+    const fileAction = target.closest<HTMLButtonElement>('[data-file-action]');
+    if (fileAction) {
+      if (fileAction.dataset.fileAction === 'import') {
+        workspace.querySelector<HTMLInputElement>('[data-native-file-input]')?.click();
+      } else if (fileAction.dataset.fileAction === 'export') {
+        exportDocument();
+      }
+      return;
+    }
+
     const historyButton = target.closest<HTMLButtonElement>('[data-history-action]');
     if (historyButton && !historyButton.disabled) {
       const state = historyButton.dataset.historyAction === 'undo'
@@ -196,6 +212,71 @@ export function bindWorkspaceInteractions(
     }
   };
 
+  const showFileMessage = (message: string, detail?: string): void => {
+    const messageElement = workspace.querySelector<HTMLElement>('[data-file-message]');
+    if (!messageElement) {
+      return;
+    }
+
+    messageElement.hidden = false;
+    messageElement.dataset.error = detail ? 'true' : 'false';
+    messageElement.replaceChildren(document.createTextNode(message));
+    if (detail) {
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = '查看驗證位置';
+      const detailText = document.createElement('span');
+      detailText.textContent = detail;
+      details.append(summary, detailText);
+      messageElement.append(details);
+    }
+  };
+
+  const downloadTextFile = (source: string, filename: string): void => {
+    const url = URL.createObjectURL(new Blob([source], { type: 'application/json;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportDocument = (): void => {
+    try {
+      const state = workflow.getState();
+      const source = serializeQuickMindDocument(state.document);
+      downloadTextFile(source, createQuickMindFilename(state.document.root.text));
+      workflow.markExported();
+      render();
+      showFileMessage('已匯出 QuickMind 原生檔案。');
+    } catch (error) {
+      const detail = error instanceof QuickMindFormatError ? `${error.code} at ${error.path}` : 'export-failed';
+      showFileMessage('匯出失敗，文件內容仍保留在目前工作區。', detail);
+    }
+  };
+
+  const importFile = async (file: File): Promise<void> => {
+    if (!file.name.toLowerCase().endsWith('.quickmind')) {
+      showFileMessage('匯入失敗：只接受 .quickmind 檔案。', 'invalid-file-extension');
+      return;
+    }
+
+    if (workflow.getState().hasUnexportedChanges && !window.confirm('目前有尚未匯出的變更，確定要以匯入文件取代嗎？')) {
+      showFileMessage('已取消匯入，原文件未變更。');
+      return;
+    }
+
+    try {
+      const document = parseQuickMindDocument(await file.text());
+      const changed = workflow.replaceDocument(document);
+      render();
+      showFileMessage(changed ? '已匯入 QuickMind 原生檔案。' : '匯入內容與目前文件相同，未產生變更。');
+    } catch (error) {
+      const detail = error instanceof QuickMindFormatError ? `${error.code} at ${error.path}` : 'import-failed';
+      showFileMessage('匯入失敗，原文件未變更。', detail);
+    }
+  };
+
   const clearDropIndicator = (): void => {
     workspace.querySelectorAll<HTMLElement>('[data-drop-target]').forEach((row) => {
       row.classList.remove('drop-before', 'drop-inside', 'drop-after');
@@ -227,7 +308,16 @@ export function bindWorkspaceInteractions(
   };
 
   const onDragOver = (event: DragEvent): void => {
-    if (event.dataTransfer?.types.includes('Files') || !draggingNodeId) {
+    if (event.dataTransfer?.types.includes('Files')) {
+      event.preventDefault();
+      clearDropIndicator();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = 'copy';
+      }
+      return;
+    }
+
+    if (!draggingNodeId) {
       return;
     }
 
@@ -257,7 +347,15 @@ export function bindWorkspaceInteractions(
   };
 
   const onDrop = (event: DragEvent): void => {
-    if (event.dataTransfer?.types.includes('Files') || !draggingNodeId) {
+    const file = event.dataTransfer?.files[0];
+    if (file) {
+      event.preventDefault();
+      void importFile(file);
+      clearDropIndicator();
+      return;
+    }
+
+    if (!draggingNodeId) {
       return;
     }
 
@@ -276,6 +374,15 @@ export function bindWorkspaceInteractions(
     clearDropIndicator();
     render();
     focusNode(movedNodeId);
+  };
+
+  const onFileInputChange = (event: Event): void => {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) {
+      void importFile(file);
+    }
   };
 
   const onDragEnd = (): void => {
@@ -378,6 +485,7 @@ export function bindWorkspaceInteractions(
   workspace.addEventListener('dragleave', onDragLeave);
   workspace.addEventListener('drop', onDrop);
   workspace.addEventListener('dragend', onDragEnd);
+  workspace.addEventListener('change', onFileInputChange);
   document.addEventListener('pointerdown', onDocumentPointerDown);
 
   return () => {
@@ -391,6 +499,7 @@ export function bindWorkspaceInteractions(
     workspace.removeEventListener('dragleave', onDragLeave);
     workspace.removeEventListener('drop', onDrop);
     workspace.removeEventListener('dragend', onDragEnd);
+    workspace.removeEventListener('change', onFileInputChange);
     document.removeEventListener('pointerdown', onDocumentPointerDown);
   };
 }

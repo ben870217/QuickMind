@@ -23,6 +23,7 @@ export interface WorkspaceState {
   restored: boolean;
   selectionId: string | null;
   editing: EditingState | null;
+  hasUnexportedChanges: boolean;
   canUndo: boolean;
   canRedo: boolean;
 }
@@ -44,6 +45,8 @@ export interface DocumentWorkflowOptions {
 interface HistoryEntry {
   before: QuickMindDocument;
   after: QuickMindDocument;
+  beforeHasUnexportedChanges: boolean;
+  afterHasUnexportedChanges: boolean;
 }
 
 type MutableWorkspaceState = Omit<WorkspaceState, 'canUndo' | 'canRedo'>;
@@ -85,6 +88,7 @@ export class DocumentWorkflow {
         restored: true,
         selectionId: null,
         editing: null,
+        hasUnexportedChanges: true,
       };
 
       return this.getState();
@@ -98,6 +102,7 @@ export class DocumentWorkflow {
       restored: false,
       selectionId: null,
       editing: null,
+      hasUnexportedChanges: true,
     };
 
     try {
@@ -112,6 +117,33 @@ export class DocumentWorkflow {
 
   setConnectivity(connectivity: ConnectivityStatus): WorkspaceState {
     this.requireState().connectivity = connectivity;
+
+    return this.getState();
+  }
+
+  replaceDocument(document: QuickMindDocument): boolean {
+    const state = this.requireState();
+    if (JSON.stringify(state.document) === JSON.stringify(document)) {
+      return false;
+    }
+
+    const beforeDocument = structuredClone(state.document);
+    const beforeHasUnexportedChanges = state.hasUnexportedChanges;
+    state.document = structuredClone(document);
+    state.selectionId = null;
+    state.editing = null;
+    this.pendingEditBefore = null;
+    state.hasUnexportedChanges = false;
+    state.persistence = 'saving';
+    this.recordHistory(beforeDocument, beforeHasUnexportedChanges);
+    this.saveImmediately();
+
+    return true;
+  }
+
+  markExported(): WorkspaceState {
+    const state = this.requireState();
+    state.hasUnexportedChanges = false;
 
     return this.getState();
   }
@@ -417,6 +449,7 @@ export class DocumentWorkflow {
     state.document = structuredClone(entry.before);
     state.selectionId = this.restoreSelection(state.selectionId);
     state.editing = null;
+    state.hasUnexportedChanges = entry.beforeHasUnexportedChanges;
     this.pendingEditBefore = null;
     this.saveImmediately();
 
@@ -438,6 +471,7 @@ export class DocumentWorkflow {
     state.document = structuredClone(entry.after);
     state.selectionId = this.restoreSelection(state.selectionId);
     state.editing = null;
+    state.hasUnexportedChanges = entry.afterHasUnexportedChanges;
     this.pendingEditBefore = null;
     this.saveImmediately();
 
@@ -495,17 +529,21 @@ export class DocumentWorkflow {
 
   private markChanged(beforeDocument: QuickMindDocument): void {
     const state = this.requireState();
+    const beforeHasUnexportedChanges = state.hasUnexportedChanges;
     state.document.meta.updatedAt = this.now();
+    state.hasUnexportedChanges = true;
     state.persistence = 'saving';
-    this.recordHistory(beforeDocument);
+    this.recordHistory(beforeDocument, beforeHasUnexportedChanges);
     this.scheduleSave();
   }
 
-  private recordHistory(beforeDocument: QuickMindDocument): void {
+  private recordHistory(beforeDocument: QuickMindDocument, beforeHasUnexportedChanges: boolean): void {
     const state = this.requireState();
     this.undoStack.push({
       before: structuredClone(beforeDocument),
       after: structuredClone(state.document),
+      beforeHasUnexportedChanges,
+      afterHasUnexportedChanges: state.hasUnexportedChanges,
     });
     if (this.undoStack.length > MAX_HISTORY_ENTRIES) {
       this.undoStack.shift();

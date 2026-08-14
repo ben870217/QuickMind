@@ -439,4 +439,42 @@ describe('DocumentWorkflow', () => {
     expect(workflow.getState().canUndo).toBe(false);
     expect(workflow.getState().document.root.isCollapsed).toBe(true);
   });
+
+  it('replaces a document as one undoable import and treats identical imports as no-op', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+    });
+    await workflow.start();
+
+    const imported = workflow.getState().document;
+    imported.meta.id = 'imported-document-id';
+    imported.meta.updatedAt = '2026-08-14T00:02:00.000Z';
+    imported.root.id = 'imported-root-id';
+    imported.root.text = '匯入文件';
+
+    expect(workflow.replaceDocument(imported)).toBe(true);
+    const importedState = workflow.getState();
+    expect(importedState.document).toEqual(imported);
+    expect(importedState.selectionId).toBeNull();
+    expect(importedState.hasUnexportedChanges).toBe(false);
+    expect(importedState.canUndo).toBe(true);
+
+    const saveCountAfterImport = store.saveCount;
+    const importedTimestamp = importedState.document.meta.updatedAt;
+    expect(workflow.replaceDocument(structuredClone(imported))).toBe(false);
+    expect(store.saveCount).toBe(saveCountAfterImport);
+    expect(workflow.getState().document.meta.updatedAt).toBe(importedTimestamp);
+
+    const undone = workflow.undo();
+    expect(undone.document.meta.id).toBe('document-id');
+    expect(undone.hasUnexportedChanges).toBe(true);
+    const redone = workflow.redo();
+    expect(redone.document.meta.id).toBe('imported-document-id');
+    expect(redone.hasUnexportedChanges).toBe(false);
+  });
 });
