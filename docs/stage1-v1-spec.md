@@ -12,11 +12,11 @@
 
 ## Solution
 
-QuickMind Stage 1 提供一個部署在 GitLab Pages 的純靜態桌面瀏覽器應用程式。使用者可以在第一次成功載入後離線建立、編輯、保存與恢復一份本機心智圖，並透過階層節點、拖曳、展開／收合與 Undo／Redo 快速整理想法。
+QuickMind Stage 1 提供一個部署在 GitHub Project Pages 的純靜態桌面瀏覽器應用程式。使用者可以在第一次成功載入後離線建立、編輯、保存與恢復一份本機心智圖，並透過階層節點、拖曳、展開／收合與 Undo／Redo 快速整理想法。
 
 第一階段以 50 個節點以下作為正常使用與驗收情境。完整文件資料留在瀏覽器本機，不提供登入、後端 API、遙測、雲端同步或團隊協作。使用者可明確匯出與重新匯入版本化的 QuickMind 原生 .quickmind 檔案，作為完整 round-trip 格式。
 
-Stage 1 的交付流程也必須可重複驗證：Docker 提供可重現建置環境，GitHub Actions 執行自動化測試；Pull Request 必須通過建置與測試，main 分支只有在全部檢查通過後才發布到 GitLab Pages。
+Stage 1 的交付流程也必須可重複驗證：本地與 GitHub Actions 共用 Docker Compose 執行入口，開發、型別檢查、domain／unit tests、Chromium E2E 與 build 都在 Docker 內執行；Pull Request 必須通過全部檢查，`main` 分支只有在全部檢查通過後才發布到 GitHub Project Pages。正式發布與本地 preview 都不需要 Nginx。
 
 ## User Stories
 
@@ -81,12 +81,12 @@ Stage 1 的交付流程也必須可重複驗證：Docker 提供可重現建置�
 59. As a 個人桌面使用者, I want to 在支援的桌面 Chrome 或 Edge 版本中使用相同核心行為, so that 我知道正式支援的瀏覽器範圍。
 60. As a 專案維護者, I want to 用 Docker 重現建置, so that 本機與 CI 不會因建置環境差異產生不可解釋的結果。
 61. As a 專案維護者, I want to Pull Request 自動執行建置與核心測試, so that 未驗證的變更不會直接進入主分支。
-62. As a 專案維護者, I want to 只有通過全部檢查的 main 變更才發布到 GitLab Pages, so that 正式站保持可驗證且可使用的版本。
+62. As a 專案維護者, I want to 只有通過全部檢查的 main 變更才發布到 GitHub Pages, so that 正式站保持可驗證且可使用的版本。
 63. As a 專案維護者, I want to 以核心行為與資料安全而不是技術框架數量判斷完成度, so that Stage 1 能快速交付並保留後續演進空間。
 
 ## Implementation Decisions
 
-- **產品邊界**：Stage 1 面向個人桌面使用者，在桌面 Chrome 與 Edge 最新兩個主要版本中使用。正式發布為 GitLab Pages 純靜態網站；不提供後端 API、登入、遙測、雲端同步、團隊協作或行動瀏覽器承諾。
+- **產品邊界**：Stage 1 面向個人桌面使用者，在桌面 Chrome 與 Edge 最新兩個主要版本中使用。正式發布為 GitHub Project Pages 純靜態網站；不提供後端 API、登入、遙測、雲端同步、團隊協作或行動瀏覽器承諾。
 - **單一文件工作區**：同一時間只處理一份本機心智圖，不提供多草稿頁籤、多文件工作階段或文件合併。啟動時優先恢復本機工作副本，沒有工作副本才建立新的「未命名心智圖」。
 - **資料模型**：文件是一棵嚴格階層樹，必須且只能有一個根節點；每個非根節點恰有一個父節點；節點的 children 順序就是同層顯示與保存順序。v1 不包含跨連結、分組外框、多父節點、自由畫布、多選或批次操作。
 - **節點內容**：節點只有單行純文字標題；根節點與一般節點不可提交空白；提交時移除前後空白、保留中間空白；標題最多 200 個使用者可見字元；同層允許同名節點。Markdown 備註、圖片附件與個別節點樣式不屬於 v1。
@@ -105,7 +105,7 @@ Stage 1 的交付流程也必須可重複驗證：Docker 提供可重現建置�
 - **離線**：第一次成功載入後，核心建立、編輯、保存、恢復、匯入與匯出可在原分頁離線完成；第一次尚未載入且離線時顯示需要連線的說明。離線提示不阻止核心操作，網路恢復不自動上傳文件，也不啟用遙測。
 - **視覺與無障礙**：莫蘭迪是視覺方向，v1 提供一套具基本對比的預設主題；深色／淺色切換、主題持久化與 FOUC 防護列入後續 stage。核心操作需可由鍵盤完成，控制項使用原生語意元素，焦點可見，狀態不只靠顏色表達；不指定隱藏語意樹或完整 ARIA tree 同步作為 v1 架構。
 - **第一階段規模與效能**：50 個節點以下以正確性、互動可用性與資料安全為主要驗收面向。不要求固定 60 FPS、O(1) 記憶體、數百節點自動折疊、DOM 剔除、Worker、虛擬化或 Minimap。
-- **建置與發布**：Docker 提供可重現建置；GitHub Actions 在 Pull Request 執行 Docker 建置、domain／unit tests 與 Chromium smoke test；main 合併後只有在全部檢查通過時才將純靜態產物發布到 GitLab Pages。Docker 是 CI／建置邊界，不是使用者執行 QuickMind 的必要條件。
+- **建置與發布**：本地與 GitHub Actions 共用 Docker Compose；Pull Request 執行 Docker 化的 typecheck、domain／unit tests、build 與 Chromium smoke test，並建立 Docker image；`main` 合併後只有在全部檢查通過時才將 `/QuickMind/` base path 的純靜態產物發布到 GitHub Project Pages。Docker 是本地與 CI 的執行邊界，不是使用者執行 QuickMind 的必要條件。
 - **後續 stage 方向**：Stage 2 方向為文件搜尋、PWA 安裝與 Light／Dark 主題；Stage 3 方向為外部格式讀取與 PNG、PDF、Mermaid、draw.io 等輸出；Stage 4 方向為依實際需求進行大規模渲染與效能最佳化。後續格式保真、匯入／匯出操作語義與效能方案不在本規格凍結。
 
 ## Testing Decisions
@@ -118,7 +118,7 @@ Stage 1 的交付流程也必須可重複驗證：Docker 提供可重現建置�
 - **保存與離線工作流**：測試新文件立即保存、延遲保存、重要操作立即保存、啟動恢復、保存失敗保留記憶體內容、重試與救援匯出、首次成功載入後離線核心使用，以及首次未載入離線時的說明頁。
 - **Chromium smoke flow**：至少有一條從使用者視角涵蓋建立根節點、建立子節點與同層節點、重新命名、拖曳、收合、Undo／Redo、保存、重新開啟、原生匯入／匯出與離線核心操作的流程；應驗證可見結果與文件恢復，而不是內部 store 或元件細節。
 - **鍵盤與可用性**：測試核心操作可由鍵盤完成、文字輸入時原生 Undo／Redo 優先、CJK 組字不被攔截、焦點在新增／刪除／拖曳／選單後符合規格、停用控制項使用原生 disabled。
-- **CI／發布**：測試 Pull Request 未通過 Docker 建置或任何核心檢查時不允許發布；測試 main 全部通過後可產生並發布純靜態產物到 GitLab Pages。部署檢查只驗證交付結果可建置與發布，不把 GitLab Pages 當成文件資料儲存層。
+- **CI／發布**：測試 Pull Request 未通過 Docker Compose 檢查、Docker 建置或任何核心檢查時不允許發布；`main` 全部通過後可產生並發布純靜態產物到 GitHub Project Pages。部署檢查只驗證交付結果可建置與發布，不把 GitHub Pages 當成文件資料儲存層。
 - **既有測試先例**：目前 repository 沒有實作程式或既有測試，因此沒有可沿用的測試先例；第一階段應先建立 domain／workflow tests、Chromium smoke test 與 CI gate。視覺回歸 threshold、完整跨瀏覽器矩陣、極端負載與複雜測試 fixture 不屬於本階段必要測試。
 
 ## Out of Scope
@@ -137,6 +137,7 @@ Stage 1 的交付流程也必須可重複驗證：Docker 提供可重現建置�
 
 - 本規格使用 CONTEXT.md 的領域語言；相關不可逆或高影響決策記錄在 docs/adr/ 下。主規格負責產品行為、範圍與驗收，ADR 負責設計取捨。
 - 原始 QuickMind.md 是技術密度過高的初始草案，包含多項已移出 v1 或尚未驗證的架構方案；實作時應以本規格、CONTEXT 與已接受 ADR 為準。
+- 每個 Stage 開始前都必須參考 QuickMind.md，並與開發人員確認該 Stage 規格；收到明確「接受」前不得開始該 Stage 的實作、測試與 commit。
 - Stage 1 的完成條件是 50 個節點以下核心流程可用且可測試，不是完成完整 XMind 替代品。
 - 後續 stage 的 Mermaid、draw.io、外部格式與效能細節，應在進入該 stage 時重新確認，不因本文件的方向性清單而提前凍結。
 - 本規格已發布至 GitHub Issue #1，並套用 ready-for-agent triage label。

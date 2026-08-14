@@ -25,12 +25,16 @@ _Avoid_: 以自訂 ARIA 架構取代原生控制項、只用顏色傳達狀態�
 _Avoid_: 在核心流程尚未驗證前先建立完整主題系統、把色票細節當成資料格式、讓主題選擇影響文件內容
 
 **v1 驗收與測試基線**：
-Definition of Done 以核心行為與資料安全可驗證為準：domain tests 覆蓋樹狀不變量、Undo／Redo、原生格式匯入匯出與資料限制；支援的 Chromium 瀏覽器至少有一條涵蓋建立、編輯、拖曳、保存、重新開啟與離線核心使用的 smoke flow；並通過 Docker 建置，以及由 GitHub Actions 執行的測試／發布流程，將靜態產物部署到 GitLab Pages。視覺回歸門檻、完整跨瀏覽器矩陣、大規模壓力測試與複雜測試 fixture 留待後續 stage。
+Definition of Done 以核心行為與資料安全可驗證為準：domain tests 覆蓋樹狀不變量、Undo／Redo、原生格式匯入匯出與資料限制；支援的 Chromium 瀏覽器至少有一條涵蓋建立、編輯、拖曳、保存、重新開啟與離線核心使用的 smoke flow；並通過 Docker Compose 建置與檢查，以及由 GitHub Actions 執行的測試／發布流程，將靜態產物部署到 GitHub Project Pages。視覺回歸門檻、完整跨瀏覽器矩陣、大規模壓力測試與複雜測試 fixture 留待後續 stage。
 _Avoid_: 以測試框架數量、固定視覺 threshold 或大規模壓測取代核心流程驗收
 
 **後續 stage 方向**：
 Stage 2 預計處理文件搜尋、PWA 安裝與 Light／Dark 主題；Stage 3 預計處理外部格式讀取，以及 PNG、PDF、Mermaid、draw.io 等輸出方向；Stage 4 再依實際需求處理大規模文件的渲染與效能最佳化。這裡只確認能力順序與方向，格式細節、保真程度、匯入／匯出範圍與操作語義，等進入對應 stage 時再逐步定義；v1 已提供的 `.quickmind` 原生匯入匯出不受影響。
 _Avoid_: 把後續 stage 的方向性規劃誤當成已完成的驗收契約、在需求尚未驗證前凍結外部格式細節
+
+**Stage 規格確認 gate**：
+每個 Stage 開始前都必須重新參考根目錄的 QuickMind.md，依目前程式與已接受決策整理該 Stage 規格，並與開發人員確認；收到明確的「接受」後，才可以開始該 Stage 的實作、測試與 commit。Stage 完成後再補上驗收、測試與發布紀錄。
+_Avoid_: 直接沿用初始草稿的未驗證技術方案、沒有明確確認就開始 Stage、把方向性 roadmap 當成驗收契約
 
 **本機心智圖**：
 文件與其工作資料儲存在使用者本機裝置，並可在離線狀態使用；這個詞不包含跨裝置同步或雲端備份。
@@ -309,12 +313,16 @@ _Avoid_: 全瀏覽器保證、行動優先、以瀏覽器名稱以外的裝置�
 _Avoid_: 把安裝成功視為可用前提、原生桌面應用程式、以安裝狀態區分文件能力
 
 **v1 正式發布環境**：
-GitLab Pages 上的純靜態網站，不提供後端 API、不傳送遙測；QuickMind 的核心文件資料留在使用者瀏覽器本機。Docker 用於可重現建置，GitHub Actions 負責自動化測試與發布流程，不改變使用者端的 local-first 模式。
+GitHub Project Pages 上的純靜態網站，不提供後端 API、不傳送遙測；QuickMind 的核心文件資料留在使用者瀏覽器本機。正式網址為 `https://ben870217.github.io/QuickMind/`，GitHub Actions 負責驗證與發布流程，不改變使用者端的 local-first 模式。
 _Avoid_: 需要登入的服務、雲端文件後端、以部署平台保存使用者內容
 
 **Stage 1 CI 發布門檻**：
-Pull Request 至少執行 Docker 建置、domain／unit tests 與 Chromium smoke test；`main` 合併後只有在全部檢查通過時，GitHub Actions 才將靜態產物發布到 GitLab Pages。任何建置或測試失敗都阻止發布。
+Pull Request 至少執行 Docker Compose 的 typecheck、domain／unit tests、build 與 Chromium smoke test，並建立 Docker image；`main` 合併後只有在全部檢查通過時，GitHub Actions 才將 `/QuickMind/` base path 的靜態產物發布到 GitHub Project Pages。任何建置或測試失敗都阻止發布。
 _Avoid_: 未通過測試仍發布、PR 未驗證就直接更新正式站、讓部署結果與測試結果脫鉤
+
+**本地 Docker 工作流**：
+本地開發、型別檢查、domain／unit tests、Chromium E2E、build 與 preview 都透過 `docker compose` 執行；本地開發使用 `/` base path，GitHub Pages build 使用 `/QuickMind/`。preview 使用 Docker 內的 Vite preview，不引入 Nginx。
+_Avoid_: 要求開發者在主機直接執行 npm／Node／Vite／Playwright、把 Nginx 當成 GitHub Pages 必要元件
 
 **離線核心使用**：
 使用者完成首次成功載入後，即使瀏覽器斷網，仍可在原分頁建立、編輯、保存、恢復、匯入與匯出 v1 文件；這不要求先安裝 PWA。

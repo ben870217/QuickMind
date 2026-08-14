@@ -1,4 +1,14 @@
-# **QuickMind 總體系統架構規格說明書 (Master Technical Specification)**
+# QuickMind 初始規格草稿
+
+> **文件定位**：這是專案初始版本的技術密集型規格草稿，保留作為產品意圖與歷史脈絡參考。現行入口是 [`README.md`](README.md)，Stage 1 的實作依據是 [`docs/stage1-v1-spec.md`](docs/stage1-v1-spec.md)，並以 [`CONTEXT.md`](CONTEXT.md) 與已接受的 [`docs/adr/`](docs/adr/) 為準。
+>
+> **Stage gate**：每一個 Stage 開始前，都必須重新參考本文件，整理該 Stage 的規格並與開發人員確認；只有收到明確的「接受」後，才可以開始實作、測試與 commit。本文件中的具體技術方案不會自動成為後續 Stage 的驗收契約。
+
+以下內容保留原始草稿，未經目前 Stage 規格重新確認，不應直接視為已承諾的功能或架構。
+
+---
+
+# **QuickMind 原始總體系統架構規格說明書 (Master Technical Specification)**
 
 **版本**：1.0.0  
 **架構類型**：Local-First Desktop PWA (Single Page Application)  
