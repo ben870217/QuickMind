@@ -77,6 +77,8 @@ GitHub Actions 使用與本地相同的 Docker Compose 入口：
 
 部署流程不需要 Nginx。GitHub Pages 直接提供 Vite 產出的靜態檔案；本地 preview 也使用 Docker 內的 `vite preview`。
 
+首次啟用 repository Pages 時，請在 GitHub repository 的 `Settings → Pages → Build and deployment` 將 `Source` 設為 `GitHub Actions`；之後 `main` 的成功 workflow 會自動發布。
+
 ## 文件與 Stage 流程
 
 - [Stage 1／v1 規格](docs/stage1-v1-spec.md)：目前可交付範圍與驗收條件。
