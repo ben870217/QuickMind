@@ -1,0 +1,77 @@
+name: QuickMind CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm run test:run
+
+      - name: Build static application
+        run: npm run build
+
+  container:
+    name: Build Docker image
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build container
+        run: docker build --tag quickmind:ci .
+
+  publish:
+    name: Publish to GitLab Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - verify
+      - container
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static application
+        run: npm run build
+
+      - name: Publish static artifact to GitLab Pages project
+        env:
+          GITLAB_PAGES_REPOSITORY: ${{ secrets.GITLAB_PAGES_REPOSITORY }}
+          GITLAB_PAGES_TOKEN: ${{ secrets.GITLAB_PAGES_TOKEN }}
+          GITLAB_PAGES_BRANCH: ${{ vars.GITLAB_PAGES_BRANCH }}
+        run: node scripts/publish-gitlab-pages.mjs
