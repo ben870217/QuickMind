@@ -6,6 +6,7 @@ import {
   getVisibleNodes,
   MAX_NODE_TITLE_LENGTH,
   normalizeNodeTitle,
+  createQuickMindId,
   type QuickMindDocument,
   type QuickMindNode,
 } from '../domain/document';
@@ -90,7 +91,7 @@ export class DocumentWorkflow {
   ) {
     this.createDocument = options.createDocument ?? (() => createQuickMindDocument());
     this.initialConnectivity = options.initialConnectivity ?? (globalThis.navigator?.onLine === false ? 'offline' : 'online');
-    this.createId = options.createId ?? (() => globalThis.crypto.randomUUID());
+    this.createId = options.createId ?? createQuickMindId;
     this.now = options.now ?? (() => new Date().toISOString());
     this.saveDelayMs = options.saveDelayMs ?? 500;
     this.saveRetryDelaysMs = options.saveRetryDelaysMs ?? [250, 1_000, 4_000];
