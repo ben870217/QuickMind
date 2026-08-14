@@ -136,6 +136,16 @@ export function bindWorkspaceInteractions(
 
   const onClick = (event: MouseEvent): void => {
     const target = event.target as HTMLElement;
+    const historyButton = target.closest<HTMLButtonElement>('[data-history-action]');
+    if (historyButton && !historyButton.disabled) {
+      const state = historyButton.dataset.historyAction === 'undo'
+        ? workflow.undo()
+        : workflow.redo();
+      render();
+      focusNode(state.selectionId);
+      return;
+    }
+
     const collapseButton = target.closest<HTMLButtonElement>('[data-collapse-node]');
     if (collapseButton) {
       workflow.toggleCollapse(collapseButton.dataset.collapseNode ?? null);
@@ -303,7 +313,19 @@ export function bindWorkspaceInteractions(
     }
 
     const state = workflow.getState();
-    if (event.key === 'ArrowUp') {
+    const modifier = event.ctrlKey || event.metaKey;
+    const key = event.key.toLowerCase();
+    if (modifier && key === 'z') {
+      event.preventDefault();
+      const nextState = event.shiftKey ? workflow.redo() : workflow.undo();
+      render();
+      focusNode(nextState.selectionId);
+    } else if (event.ctrlKey && key === 'y') {
+      event.preventDefault();
+      const nextState = workflow.redo();
+      render();
+      focusNode(nextState.selectionId);
+    } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       workflow.navigate('up');
       render();

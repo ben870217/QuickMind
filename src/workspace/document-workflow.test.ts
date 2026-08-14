@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createQuickMindDocument } from '../domain/document';
 import type { QuickMindDocument } from '../domain/document';
 import type { WorkspaceStore } from '../persistence/workspace-store';
-import { DocumentWorkflow } from './document-workflow';
+import { DocumentWorkflow, MAX_HISTORY_ENTRIES } from './document-workflow';
 
 class MemoryWorkspaceStore implements WorkspaceStore {
   document: QuickMindDocument | null = null;
@@ -343,5 +343,100 @@ describe('DocumentWorkflow', () => {
     const state = workflow.getState();
     expect(state.document.root.children[0]?.id).toBe('parent-id');
     expect(state.document.root.children[0]?.children[0]?.id).toBe('child-id');
+  });
+
+  it('undoes and redoes one committed title change with its original timestamps', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'child-id'];
+    const timestamps = [
+      '2026-08-14T00:00:00.000Z',
+      '2026-08-14T00:00:01.000Z',
+      '2026-08-14T00:00:02.000Z',
+      '2026-08-14T00:00:03.000Z',
+    ];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => timestamps.shift() ?? '2026-08-14T00:00:01.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+      now: () => timestamps.shift() ?? '2026-08-14T00:00:04.000Z',
+      saveDelayMs: 10_000,
+    });
+    const initial = await workflow.start();
+
+    workflow.addChild(initial.document.root.id);
+    workflow.commitTitle('原始標題');
+    workflow.beginEditing('child-id');
+    workflow.commitTitle('更新標題');
+
+    const changed = workflow.getState();
+    expect(changed.canUndo).toBe(true);
+    expect(changed.canRedo).toBe(false);
+    expect(changed.document.root.children[0]?.text).toBe('更新標題');
+    expect(changed.document.meta.updatedAt).toBe('2026-08-14T00:00:03.000Z');
+
+    const undone = workflow.undo();
+    expect(undone.document.root.children[0]?.text).toBe('原始標題');
+    expect(undone.document.meta.updatedAt).toBe('2026-08-14T00:00:02.000Z');
+    expect(undone.canRedo).toBe(true);
+
+    const redone = workflow.redo();
+    expect(redone.document.root.children[0]?.text).toBe('更新標題');
+    expect(redone.document.meta.updatedAt).toBe('2026-08-14T00:00:03.000Z');
+    expect(redone.canUndo).toBe(true);
+    expect(store.saveCount).toBeGreaterThan(1);
+  });
+
+  it('clears the redo branch after a new document change', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'child-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+    });
+    const initial = await workflow.start();
+
+    workflow.addChild(initial.document.root.id);
+    workflow.commitTitle('第一個標題');
+    workflow.beginEditing('child-id');
+    workflow.commitTitle('第二個標題');
+    workflow.undo();
+    expect(workflow.getState().canRedo).toBe(true);
+
+    workflow.beginEditing('child-id');
+    workflow.commitTitle('分支標題');
+    expect(workflow.getState().canRedo).toBe(false);
+    expect(workflow.redo().document.root.children[0]?.text).toBe('分支標題');
+  });
+
+  it('keeps only the most recent 100 document operations', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'child-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+      saveDelayMs: 10_000,
+    });
+    const initial = await workflow.start();
+
+    workflow.addChild(initial.document.root.id);
+    workflow.commitTitle('可折疊節點');
+    for (let index = 0; index < MAX_HISTORY_ENTRIES + 1; index += 1) {
+      workflow.toggleCollapse(initial.document.root.id);
+    }
+
+    for (let index = 0; index < MAX_HISTORY_ENTRIES; index += 1) {
+      workflow.undo();
+    }
+
+    expect(workflow.getState().canUndo).toBe(false);
+    expect(workflow.getState().document.root.isCollapsed).toBe(true);
   });
 });

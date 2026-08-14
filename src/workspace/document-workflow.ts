@@ -14,6 +14,7 @@ export type PersistenceStatus = 'saving' | 'saved' | 'error';
 export type ConnectivityStatus = 'online' | 'offline';
 export type NavigationDirection = 'up' | 'down' | 'left' | 'right';
 export type MovePosition = 'before' | 'inside' | 'after';
+export const MAX_HISTORY_ENTRIES = 100;
 
 export interface WorkspaceState {
   document: QuickMindDocument;
@@ -22,6 +23,8 @@ export interface WorkspaceState {
   restored: boolean;
   selectionId: string | null;
   editing: EditingState | null;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 export interface EditingState {
@@ -38,14 +41,24 @@ export interface DocumentWorkflowOptions {
   saveDelayMs?: number;
 }
 
+interface HistoryEntry {
+  before: QuickMindDocument;
+  after: QuickMindDocument;
+}
+
+type MutableWorkspaceState = Omit<WorkspaceState, 'canUndo' | 'canRedo'>;
+
 export class DocumentWorkflow {
-  private state: WorkspaceState | null = null;
+  private state: MutableWorkspaceState | null = null;
   private readonly createDocument: () => QuickMindDocument;
   private readonly initialConnectivity: ConnectivityStatus;
   private readonly createId: () => string;
   private readonly now: () => string;
   private readonly saveDelayMs: number;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private undoStack: HistoryEntry[] = [];
+  private redoStack: HistoryEntry[] = [];
+  private pendingEditBefore: QuickMindDocument | null = null;
 
   constructor(
     private readonly store: WorkspaceStore,
@@ -59,6 +72,9 @@ export class DocumentWorkflow {
   }
 
   async start(): Promise<WorkspaceState> {
+    this.undoStack = [];
+    this.redoStack = [];
+    this.pendingEditBefore = null;
     const savedDocument = await this.store.load();
 
     if (savedDocument) {
@@ -138,6 +154,7 @@ export class DocumentWorkflow {
       throw new Error(`Node ${parentId} does not exist`);
     }
 
+    this.pendingEditBefore = structuredClone(state.document);
     const node = this.createEmptyNode();
     parent.children.push(node);
     state.selectionId = node.id;
@@ -158,6 +175,7 @@ export class DocumentWorkflow {
       return this.getState();
     }
 
+    this.pendingEditBefore = structuredClone(state.document);
     const node = this.createEmptyNode();
     location.parent.children.splice(location.index + 1, 0, node);
     state.selectionId = node.id;
@@ -187,6 +205,7 @@ export class DocumentWorkflow {
       if (editing.isNew) {
         this.removePendingNode(editing.nodeId);
         state.editing = null;
+        this.pendingEditBefore = null;
         return true;
       }
 
@@ -199,11 +218,15 @@ export class DocumentWorkflow {
     }
 
     const changed = node.text !== normalized;
+    const beforeDocument = editing.isNew
+      ? this.pendingEditBefore ?? structuredClone(state.document)
+      : structuredClone(state.document);
     node.text = normalized;
     state.editing = null;
+    this.pendingEditBefore = null;
 
     if (changed) {
-      this.markChanged();
+      this.markChanged(beforeDocument);
     }
 
     return true;
@@ -219,6 +242,7 @@ export class DocumentWorkflow {
 
     if (editing.isNew) {
       this.removePendingNode(editing.nodeId);
+      this.pendingEditBefore = null;
     }
 
     state.editing = null;
@@ -238,12 +262,13 @@ export class DocumentWorkflow {
       return this.getState();
     }
 
+    const beforeDocument = structuredClone(state.document);
     const parent = location.parent;
     parent.children.splice(location.index, 1);
     const fallback = parent.children[location.index - 1] ?? parent.children[location.index] ?? parent;
     state.selectionId = fallback.id;
     state.editing = null;
-    this.markChanged();
+    this.markChanged(beforeDocument);
 
     return this.getState();
   }
@@ -260,9 +285,10 @@ export class DocumentWorkflow {
       return this.getState();
     }
 
+    const beforeDocument = structuredClone(state.document);
     node.isCollapsed = !node.isCollapsed;
     state.selectionId = node.id;
-    this.markChanged();
+    this.markChanged(beforeDocument);
 
     return this.getState();
   }
@@ -294,6 +320,7 @@ export class DocumentWorkflow {
       return this.getState();
     }
 
+    const beforeDocument = structuredClone(state.document);
     const source = sourceLocation.node;
     sourceLocation.parent.children.splice(sourceLocation.index, 1);
 
@@ -315,7 +342,7 @@ export class DocumentWorkflow {
 
     state.selectionId = source.id;
     state.editing = null;
-    this.markChanged();
+    this.markChanged(beforeDocument);
 
     return this.getState();
   }
@@ -347,8 +374,9 @@ export class DocumentWorkflow {
 
     if (direction === 'left') {
       if (current.children.length > 0 && !current.isCollapsed) {
+        const beforeDocument = structuredClone(state.document);
         current.isCollapsed = true;
-        this.markChanged();
+        this.markChanged(beforeDocument);
         return this.getState();
       }
 
@@ -360,8 +388,9 @@ export class DocumentWorkflow {
     }
 
     if (current.children.length > 0 && current.isCollapsed) {
+      const beforeDocument = structuredClone(state.document);
       current.isCollapsed = false;
-      this.markChanged();
+      this.markChanged(beforeDocument);
       return this.getState();
     }
 
@@ -373,16 +402,60 @@ export class DocumentWorkflow {
     return this.getState();
   }
 
+  undo(): WorkspaceState {
+    const state = this.requireState();
+    const entry = this.undoStack.pop();
+
+    if (!entry || state.editing) {
+      if (entry) {
+        this.undoStack.push(entry);
+      }
+      return this.getState();
+    }
+
+    this.redoStack.push(entry);
+    state.document = structuredClone(entry.before);
+    state.selectionId = this.restoreSelection(state.selectionId);
+    state.editing = null;
+    this.pendingEditBefore = null;
+    this.saveImmediately();
+
+    return this.getState();
+  }
+
+  redo(): WorkspaceState {
+    const state = this.requireState();
+    const entry = this.redoStack.pop();
+
+    if (!entry || state.editing) {
+      if (entry) {
+        this.redoStack.push(entry);
+      }
+      return this.getState();
+    }
+
+    this.undoStack.push(entry);
+    state.document = structuredClone(entry.after);
+    state.selectionId = this.restoreSelection(state.selectionId);
+    state.editing = null;
+    this.pendingEditBefore = null;
+    this.saveImmediately();
+
+    return this.getState();
+  }
+
   getState(): WorkspaceState {
     const state = this.requireState();
 
     return {
       ...state,
       document: structuredClone(state.document),
+      canUndo: this.undoStack.length > 0 && !state.editing,
+      canRedo: this.redoStack.length > 0 && !state.editing,
     };
   }
 
-  private requireState(): WorkspaceState {
+  private requireState(): MutableWorkspaceState {
     if (!this.state) {
       throw new Error('Document workflow has not started');
     }
@@ -411,11 +484,33 @@ export class DocumentWorkflow {
     state.selectionId = location.parent.id;
   }
 
-  private markChanged(): void {
+  private restoreSelection(selectionId: string | null): string | null {
+    const state = this.requireState();
+    if (selectionId && findNode(state.document.root, selectionId)) {
+      return selectionId;
+    }
+
+    return state.document.root.id;
+  }
+
+  private markChanged(beforeDocument: QuickMindDocument): void {
     const state = this.requireState();
     state.document.meta.updatedAt = this.now();
     state.persistence = 'saving';
+    this.recordHistory(beforeDocument);
     this.scheduleSave();
+  }
+
+  private recordHistory(beforeDocument: QuickMindDocument): void {
+    const state = this.requireState();
+    this.undoStack.push({
+      before: structuredClone(beforeDocument),
+      after: structuredClone(state.document),
+    });
+    if (this.undoStack.length > MAX_HISTORY_ENTRIES) {
+      this.undoStack.shift();
+    }
+    this.redoStack = [];
   }
 
   private scheduleSave(): void {
@@ -427,6 +522,17 @@ export class DocumentWorkflow {
       this.saveTimer = null;
       void this.persistCurrentDocument();
     }, this.saveDelayMs);
+  }
+
+  private saveImmediately(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+
+    const state = this.requireState();
+    state.persistence = 'saving';
+    void this.persistCurrentDocument();
   }
 
   private async persistCurrentDocument(): Promise<void> {

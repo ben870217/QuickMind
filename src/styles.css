@@ -79,9 +79,37 @@ h1 {
 
 .workspace-toolbar {
   display: flex;
+  align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 1rem;
+}
+
+.history-button {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #cbb8ab;
+  border-radius: 0.5rem;
+  color: #5f514a;
+  background: #fffaf4;
+  cursor: pointer;
+}
+
+.history-button:hover,
+.history-button:focus-visible {
+  border-color: #9b8074;
+  background: #f8eee5;
+}
+
+.history-button:focus-visible {
+  outline: 3px solid #8ca89a;
+  outline-offset: 2px;
+}
+
+.history-button:disabled {
+  color: #b5a79e;
+  background: #eee8e1;
+  cursor: not-allowed;
 }
 
 .workspace-badge {
