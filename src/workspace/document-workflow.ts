@@ -2,6 +2,7 @@ import {
   createQuickMindDocument,
   findNode,
   findNodeLocation,
+  getVisibleNodes,
   MAX_NODE_TITLE_LENGTH,
   normalizeNodeTitle,
   type QuickMindDocument,
@@ -11,6 +12,7 @@ import type { WorkspaceStore } from '../persistence/workspace-store';
 
 export type PersistenceStatus = 'saving' | 'saved' | 'error';
 export type ConnectivityStatus = 'online' | 'offline';
+export type NavigationDirection = 'up' | 'down' | 'left' | 'right';
 
 export interface WorkspaceState {
   document: QuickMindDocument;
@@ -219,6 +221,100 @@ export class DocumentWorkflow {
     }
 
     state.editing = null;
+
+    return this.getState();
+  }
+
+  deleteNode(nodeId: string | null = this.requireState().selectionId): WorkspaceState {
+    const state = this.requireState();
+
+    if (!nodeId) {
+      return this.getState();
+    }
+
+    const location = findNodeLocation(state.document.root, nodeId);
+    if (!location?.parent) {
+      return this.getState();
+    }
+
+    const parent = location.parent;
+    parent.children.splice(location.index, 1);
+    const fallback = parent.children[location.index - 1] ?? parent.children[location.index] ?? parent;
+    state.selectionId = fallback.id;
+    state.editing = null;
+    this.markChanged();
+
+    return this.getState();
+  }
+
+  toggleCollapse(nodeId: string | null = this.requireState().selectionId): WorkspaceState {
+    const state = this.requireState();
+
+    if (!nodeId) {
+      return this.getState();
+    }
+
+    const node = findNode(state.document.root, nodeId);
+    if (!node || node.children.length === 0) {
+      return this.getState();
+    }
+
+    node.isCollapsed = !node.isCollapsed;
+    state.selectionId = node.id;
+    this.markChanged();
+
+    return this.getState();
+  }
+
+  navigate(direction: NavigationDirection): WorkspaceState {
+    const state = this.requireState();
+
+    if (!state.selectionId) {
+      state.selectionId = state.document.root.id;
+      return this.getState();
+    }
+
+    const current = findNode(state.document.root, state.selectionId);
+    if (!current) {
+      state.selectionId = state.document.root.id;
+      return this.getState();
+    }
+
+    if (direction === 'up' || direction === 'down') {
+      const visible = getVisibleNodes(state.document.root);
+      const currentIndex = visible.findIndex((node) => node.id === current.id);
+      const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+      const next = visible[nextIndex];
+      if (next) {
+        state.selectionId = next.id;
+      }
+      return this.getState();
+    }
+
+    if (direction === 'left') {
+      if (current.children.length > 0 && !current.isCollapsed) {
+        current.isCollapsed = true;
+        this.markChanged();
+        return this.getState();
+      }
+
+      const location = findNodeLocation(state.document.root, current.id);
+      if (location?.parent) {
+        state.selectionId = location.parent.id;
+      }
+      return this.getState();
+    }
+
+    if (current.children.length > 0 && current.isCollapsed) {
+      current.isCollapsed = false;
+      this.markChanged();
+      return this.getState();
+    }
+
+    const firstChild = current.children[0];
+    if (firstChild) {
+      state.selectionId = firstChild.id;
+    }
 
     return this.getState();
   }

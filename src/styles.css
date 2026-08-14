@@ -122,6 +122,39 @@ h1 {
   min-width: 0;
 }
 
+.node-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+.node-toggle,
+.node-toggle-placeholder {
+  display: grid;
+  flex: 0 0 2rem;
+  place-items: center;
+  min-height: 2.8rem;
+  border: 1px solid transparent;
+  border-radius: 0.55rem;
+  color: #8b7369;
+  background: transparent;
+}
+
+.node-toggle {
+  cursor: pointer;
+}
+
+.node-toggle:hover,
+.node-toggle:focus-visible {
+  border-color: #cbb8ab;
+  background: #f8eee5;
+}
+
+.node-toggle:focus-visible {
+  outline: 3px solid #8ca89a;
+  outline-offset: 2px;
+}
+
 .node-card,
 .node-editor {
   width: 100%;
@@ -131,6 +164,11 @@ h1 {
   color: #453c39;
   background: #fffaf4;
   text-align: left;
+}
+
+.node-card,
+.node-editor {
+  flex: 1;
 }
 
 .node-card {
@@ -151,6 +189,43 @@ h1 {
 
 .node-editor {
   display: block;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 10;
+  display: grid;
+  min-width: 11rem;
+  padding: 0.35rem;
+  border: 1px solid #cbb8ab;
+  border-radius: 0.7rem;
+  background: #fffaf4;
+  box-shadow: 0 0.75rem 2rem rgba(85, 71, 62, 0.18);
+}
+
+.context-menu-item {
+  padding: 0.55rem 0.75rem;
+  border: 0;
+  border-radius: 0.4rem;
+  color: #453c39;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-menu-item:hover,
+.context-menu-item:focus-visible {
+  background: #f8eee5;
+}
+
+.context-menu-item:focus-visible {
+  outline: 3px solid #8ca89a;
+  outline-offset: -2px;
+}
+
+.context-menu-item:disabled {
+  color: #b5a79e;
+  cursor: not-allowed;
 }
 
 .node-kicker {

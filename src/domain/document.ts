@@ -99,3 +99,17 @@ export function findNodeLocation(root: QuickMindNode, nodeId: string): NodeLocat
 export function normalizeNodeTitle(value: string): string {
   return value.trim();
 }
+
+export function getVisibleNodes(root: QuickMindNode): QuickMindNode[] {
+  const visible: QuickMindNode[] = [];
+
+  const visit = (node: QuickMindNode): void => {
+    visible.push(node);
+    if (!node.isCollapsed) {
+      node.children.forEach(visit);
+    }
+  };
+
+  visit(root);
+  return visible;
+}

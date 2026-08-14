@@ -21,14 +21,17 @@ export function renderWorkspace(container: HTMLElement, state: WorkspaceState): 
 
 function renderNode(node: WorkspaceState['document']['root'], state: WorkspaceState, level: number): string {
   const editing = state.editing?.nodeId === node.id;
+  const toggle = node.children.length > 0
+    ? `<button class="node-toggle" type="button" data-collapse-node="${node.id}" aria-label="${node.isCollapsed ? '展開' : '收合'} ${escapeHtml(node.text)}">${node.isCollapsed ? '▸' : '▾'}</button>`
+    : '<span class="node-toggle-placeholder" aria-hidden="true"></span>';
   const content = editing
     ? `<input class="node-editor" data-node-editor data-node-id="${node.id}" value="${escapeHtml(node.text)}" maxlength="200" aria-label="編輯節點標題" />`
     : `<button class="node-card" type="button" data-node-id="${node.id}" aria-selected="${state.selectionId === node.id}">${escapeHtml(node.text)}</button>`;
-  const children = node.children.length > 0
+  const children = node.children.length > 0 && !node.isCollapsed
     ? `<ul class="mindmap-children" role="group">${node.children.map((child) => renderNode(child, state, level + 1)).join('')}</ul>`
     : '';
 
-  return `<li class="mindmap-node" role="treeitem" aria-level="${level}" aria-selected="${state.selectionId === node.id}" data-node-id="${node.id}">${content}${children}</li>`;
+  return `<li class="mindmap-node" role="treeitem" aria-level="${level}" aria-expanded="${node.children.length > 0 ? !node.isCollapsed : 'false'}" aria-selected="${state.selectionId === node.id}" data-node-id="${node.id}"><div class="node-row">${toggle}${content}</div>${children}</li>`;
 }
 
 function escapeHtml(value: string): string {

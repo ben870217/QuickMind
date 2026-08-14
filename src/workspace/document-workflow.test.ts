@@ -183,4 +183,94 @@ describe('DocumentWorkflow', () => {
       '第二個想法',
     ]);
   });
+
+  it('deletes a subtree and moves selection to the previous sibling or parent', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'first-id', 'second-id', 'grandchild-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+      now: () => '2026-08-14T00:01:00.000Z',
+    });
+    const initial = await workflow.start();
+
+    workflow.addChild(initial.document.root.id);
+    workflow.commitTitle('第一個想法');
+    const first = workflow.getState().document.root.children[0];
+    if (!first) throw new Error('Expected the first child to exist');
+    workflow.addSibling(first.id);
+    workflow.commitTitle('第二個想法');
+    const second = workflow.getState().document.root.children[1];
+    if (!second) throw new Error('Expected the second child to exist');
+    workflow.addChild(second.id);
+    workflow.commitTitle('第二個想法的子節點');
+
+    workflow.deleteNode(second.id);
+    expect(workflow.getState().document.root.children.map((node) => node.text)).toEqual(['第一個想法']);
+    expect(workflow.getState().selectionId).toBe('first-id');
+
+    workflow.deleteNode(first.id);
+    expect(workflow.getState().document.root.children).toHaveLength(0);
+    expect(workflow.getState().selectionId).toBe('root-id');
+  });
+
+  it('toggles only nodes that have children', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'child-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+    });
+    const initial = await workflow.start();
+
+    workflow.toggleCollapse(initial.document.root.id);
+    expect(workflow.getState().document.root.isCollapsed).toBe(false);
+    workflow.addChild(initial.document.root.id);
+    workflow.commitTitle('子節點');
+    workflow.toggleCollapse(initial.document.root.id);
+    expect(workflow.getState().document.root.isCollapsed).toBe(true);
+    workflow.toggleCollapse(initial.document.root.children[0]?.id ?? null);
+    expect(workflow.getState().document.root.children[0]?.isCollapsed).toBe(false);
+  });
+
+  it('navigates visible nodes and expands or collapses with left and right', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'first-id', 'second-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+    });
+    const initial = await workflow.start();
+
+    workflow.navigate('down');
+    expect(workflow.getState().selectionId).toBe('root-id');
+    workflow.addChild(initial.document.root.id);
+    workflow.commitTitle('第一個想法');
+    const first = workflow.getState().document.root.children[0];
+    if (!first) throw new Error('Expected the first child to exist');
+    workflow.addSibling(first.id);
+    workflow.commitTitle('第二個想法');
+    workflow.selectNode('root-id');
+
+    workflow.navigate('right');
+    expect(workflow.getState().selectionId).toBe('first-id');
+    workflow.navigate('down');
+    expect(workflow.getState().selectionId).toBe('second-id');
+    workflow.navigate('up');
+    expect(workflow.getState().selectionId).toBe('first-id');
+    workflow.navigate('left');
+    expect(workflow.getState().selectionId).toBe('root-id');
+    workflow.toggleCollapse('root-id');
+    workflow.navigate('down');
+    expect(workflow.getState().selectionId).toBe('root-id');
+  });
 });
