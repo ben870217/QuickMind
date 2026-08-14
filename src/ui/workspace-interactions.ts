@@ -1,4 +1,10 @@
-import { findNode, findNodeLocation } from '../domain/document';
+import {
+  countUserVisibleCharacters,
+  findNode,
+  findNodeLocation,
+  MAX_NODE_TITLE_LENGTH,
+  takeUserVisibleCharacters,
+} from '../domain/document';
 import {
   createQuickMindFilename,
   parseQuickMindDocument,
@@ -15,6 +21,9 @@ export function bindWorkspaceInteractions(
   let contextMenu: HTMLElement | null = null;
   let contextMenuNodeId: string | null = null;
   let draggingNodeId: string | null = null;
+  const minimumZoom = 0.5;
+  const maximumZoom = 2;
+  const maximumPan = 2_000;
 
   const focusEditor = (): void => {
     const editor = workspace.querySelector<HTMLInputElement>('[data-node-editor]');
@@ -24,6 +33,7 @@ export function bindWorkspaceInteractions(
 
   const focusNode = (nodeId: string | null): void => {
     if (!nodeId) {
+      workspace.querySelector<HTMLElement>('[data-canvas]')?.focus();
       return;
     }
 
@@ -33,12 +43,54 @@ export function bindWorkspaceInteractions(
     focusTarget?.focus();
   };
 
+  const getCanvas = (): HTMLElement | null => workspace.querySelector<HTMLElement>('[data-canvas]');
+
+  const getCanvasView = (): { zoom: number; panX: number; panY: number } => ({
+    zoom: clamp(Number(workspace.dataset.canvasZoom ?? 1), minimumZoom, maximumZoom),
+    panX: clamp(Number(workspace.dataset.canvasPanX ?? 0), -maximumPan, maximumPan),
+    panY: clamp(Number(workspace.dataset.canvasPanY ?? 0), -maximumPan, maximumPan),
+  });
+
+  const setCanvasView = (view: { zoom: number; panX: number; panY: number }): void => {
+    const normalized = {
+      zoom: clamp(view.zoom, minimumZoom, maximumZoom),
+      panX: clamp(view.panX, -maximumPan, maximumPan),
+      panY: clamp(view.panY, -maximumPan, maximumPan),
+    };
+    workspace.dataset.canvasZoom = String(normalized.zoom);
+    workspace.dataset.canvasPanX = String(normalized.panX);
+    workspace.dataset.canvasPanY = String(normalized.panY);
+    const content = workspace.querySelector<HTMLElement>('[data-canvas-content]');
+    if (content) {
+      content.style.transform = `translate3d(${normalized.panX}px, ${normalized.panY}px, 0) scale(${normalized.zoom})`;
+    }
+  };
+
+  const focusCanvasTarget = (nodeId: string | null): void => {
+    const targetId = nodeId ?? workflow.getState().document.root.id;
+    const target = Array.from(workspace.querySelectorAll<HTMLElement>('[data-node-id]'))
+      .find((candidate) => candidate.dataset.nodeId === targetId);
+    target?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+    (target?.querySelector<HTMLElement>('[data-node-editor], .node-card') ?? getCanvas())?.focus();
+  };
+
   const renderFocused = (state: ReturnType<DocumentWorkflow['getState']>): void => {
     render();
     const restoreFocus = (): void => focusNode(state.selectionId);
     restoreFocus();
     window.requestAnimationFrame(restoreFocus);
   };
+
+  const updateTitleCounter = (editor: HTMLInputElement): void => {
+    const counter = editor.parentElement?.querySelector<HTMLElement>('[data-title-count]');
+    if (counter) {
+      counter.textContent = `還可輸入 ${MAX_NODE_TITLE_LENGTH - countUserVisibleCharacters(editor.value)} 個字元`;
+    }
+  };
+
+  const clamp = (value: number, minimum: number, maximum: number): number => (
+    Number.isFinite(value) ? Math.min(maximum, Math.max(minimum, value)) : minimum
+  );
 
   const closeContextMenu = (restoreFocus: boolean): void => {
     const nodeId = contextMenuNodeId;
@@ -200,7 +252,15 @@ export function bindWorkspaceInteractions(
     }
 
     const node = target.closest<HTMLElement>('[data-node-id]');
-    if (!node || target.closest('[data-node-editor]')) {
+    if (target.closest('[data-node-editor]')) {
+      return;
+    }
+
+    if (!node) {
+      const canvasArea = target.closest<HTMLElement>('.document-workspace');
+      if (canvasArea && !target.closest('.workspace-toolbar, [data-file-message]')) {
+        renderFocused(workflow.selectNode(null));
+      }
       return;
     }
 
@@ -253,12 +313,29 @@ export function bindWorkspaceInteractions(
     if (detail) {
       const details = document.createElement('details');
       const summary = document.createElement('summary');
-      summary.textContent = '查看驗證位置';
+      summary.textContent = '查看詳細資訊';
       const detailText = document.createElement('span');
       detailText.textContent = detail;
       details.append(summary, detailText);
       messageElement.append(details);
     }
+  };
+
+  const describeFormatError = (error: QuickMindFormatError): string => {
+    if (error.code === 'unsupported-version') {
+      const requested = error.details.requestedVersion === undefined
+        ? '未提供'
+        : String(error.details.requestedVersion);
+      return `檔案需要 schemaVersion ${requested}，目前支援 ${error.details.supportedVersion ?? 1}（${error.path}）。`;
+    }
+    if (error.code === 'file-size-limit') {
+      return `檔案大小 ${error.details.byteLength?.toLocaleString() ?? '未知'} / ${(error.details.maxBytes ?? 10 * 1024 * 1024).toLocaleString()} bytes（${error.path}）。`;
+    }
+    if (error.code === 'node-limit') {
+      return `節點數 ${error.details.nodeCount?.toLocaleString() ?? '未知'} / ${(error.details.maxNodes ?? 10_000).toLocaleString()}（${error.path}）。`;
+    }
+
+    return `${error.code} at ${error.path}`;
   };
 
   const downloadTextFile = (source: string, filename: string): void => {
@@ -282,7 +359,7 @@ export function bindWorkspaceInteractions(
       render();
       showFileMessage(rescue ? '已匯出救援檔案；本機保存警告仍然存在。' : '已匯出 QuickMind 原生檔案。');
     } catch (error) {
-      const detail = error instanceof QuickMindFormatError ? `${error.code} at ${error.path}` : 'export-failed';
+      const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'export-failed';
       showFileMessage('匯出失敗，文件內容仍保留在目前工作區。', detail);
     }
   };
@@ -309,7 +386,7 @@ export function bindWorkspaceInteractions(
       render();
       showFileMessage(changed ? '已匯入 QuickMind 原生檔案。' : '匯入內容與目前文件相同，未產生變更。');
     } catch (error) {
-      const detail = error instanceof QuickMindFormatError ? `${error.code} at ${error.path}` : 'import-failed';
+      const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'import-failed';
       showFileMessage('匯入失敗，原文件未變更。', detail);
     }
   };
@@ -422,6 +499,39 @@ export function bindWorkspaceInteractions(
     }
   };
 
+  const onInput = (event: Event): void => {
+    const editor = (event.target as HTMLElement).closest<HTMLInputElement>('[data-node-editor]');
+    if (!editor) {
+      return;
+    }
+
+    const truncated = takeUserVisibleCharacters(editor.value, MAX_NODE_TITLE_LENGTH);
+    if (editor.value !== truncated) {
+      editor.value = truncated;
+    }
+    updateTitleCounter(editor);
+  };
+
+  const onWheel = (event: WheelEvent): void => {
+    if (!getCanvas()?.contains(event.target as Node)) {
+      return;
+    }
+
+    const view = getCanvasView();
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? 1.1 : 0.9;
+      setCanvasView({ ...view, zoom: view.zoom * factor });
+    } else if (event.shiftKey) {
+      event.preventDefault();
+      const horizontalDelta = event.deltaX === 0 ? event.deltaY : event.deltaX;
+      setCanvasView({ ...view, panX: view.panX - horizontalDelta });
+    } else {
+      event.preventDefault();
+      setCanvasView({ ...view, panY: view.panY - event.deltaY });
+    }
+  };
+
   const onDragEnd = (): void => {
     const dragged = draggingNodeId
       ? Array.from(workspace.querySelectorAll<HTMLElement>('[data-drag-node]'))
@@ -462,7 +572,22 @@ export function bindWorkspaceInteractions(
     const state = workflow.getState();
     const modifier = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
-    if (modifier && key === 'z') {
+    const canvasFocused = Boolean(target.closest('[data-canvas]')) || target === workspace;
+    if (canvasFocused && (event.key === '+' || event.key === '=')) {
+      event.preventDefault();
+      const view = getCanvasView();
+      setCanvasView({ ...view, zoom: view.zoom * 1.1 });
+    } else if (canvasFocused && event.key === '-') {
+      event.preventDefault();
+      const view = getCanvasView();
+      setCanvasView({ ...view, zoom: view.zoom * 0.9 });
+    } else if (canvasFocused && key === '0') {
+      event.preventDefault();
+      setCanvasView({ zoom: 1, panX: 0, panY: 0 });
+    } else if (canvasFocused && key === 'f') {
+      event.preventDefault();
+      focusCanvasTarget(state.selectionId);
+    } else if (modifier && key === 'z') {
       event.preventDefault();
       const nextState = event.shiftKey ? workflow.redo() : workflow.undo();
       renderFocused(nextState);
@@ -517,6 +642,8 @@ export function bindWorkspaceInteractions(
   workspace.addEventListener('dragleave', onDragLeave);
   workspace.addEventListener('drop', onDrop);
   workspace.addEventListener('dragend', onDragEnd);
+  workspace.addEventListener('input', onInput);
+  workspace.addEventListener('wheel', onWheel, { passive: false });
   workspace.addEventListener('change', onFileInputChange);
   document.addEventListener('pointerdown', onDocumentPointerDown);
 
@@ -531,6 +658,8 @@ export function bindWorkspaceInteractions(
     workspace.removeEventListener('dragleave', onDragLeave);
     workspace.removeEventListener('drop', onDrop);
     workspace.removeEventListener('dragend', onDragEnd);
+    workspace.removeEventListener('input', onInput);
+    workspace.removeEventListener('wheel', onWheel);
     workspace.removeEventListener('change', onFileInputChange);
     document.removeEventListener('pointerdown', onDocumentPointerDown);
   };

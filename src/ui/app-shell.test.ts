@@ -7,6 +7,7 @@ describe('QuickMind app shell', () => {
 
     expect(markup).toContain('<h1>QuickMind</h1>');
     expect(markup).toContain('aria-label="QuickMind 工作區"');
+    expect(markup).toContain('tabindex="0"');
     expect(markup).toContain('role="status"');
     expect(markup).toContain('data-workspace');
   });

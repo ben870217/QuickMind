@@ -17,8 +17,13 @@ test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'QuickMind' })).toBeVisible();
 
-  const root = page.locator('.node-card').first();
-  await expect(root).toHaveText('未命名心智圖');
+  const rootEditor = page.locator('[data-node-editor]');
+  await expect(rootEditor).toBeFocused();
+  await expect(rootEditor).toHaveValue('未命名心智圖');
+  await rootEditor.fill('我的心智圖');
+  await rootEditor.press('Enter');
+  const root = page.getByRole('button', { name: '我的心智圖', exact: true });
+  await expect(root).toBeVisible();
   await root.click();
 
   await page.keyboard.press('Tab');
@@ -31,7 +36,7 @@ test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
   await expect(editor).toBeFocused();
   await editor.fill('第二個想法');
   await editor.press('Enter');
-  await expect(page.locator('.node-card')).toContainText(['未命名心智圖', '第一個想法', '第二個想法']);
+  await expect(page.locator('.node-card')).toContainText(['我的心智圖', '第一個想法', '第二個想法']);
 
   await page.keyboard.press('F2');
   await expect(editor).toBeFocused();
@@ -55,10 +60,20 @@ test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
   await rootToggle.click();
   await expect(childCards).toHaveCount(2);
 
-  await page.getByRole('button', { name: '未命名心智圖', exact: true }).click({ button: 'right' });
+  await page.getByRole('button', { name: '我的心智圖', exact: true }).click({ button: 'right' });
   await expect(page.getByRole('menu', { name: '節點操作' })).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('button', { name: '未命名心智圖', exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: '我的心智圖', exact: true })).toBeFocused();
+
+  const canvas = page.locator('[data-canvas]');
+  await canvas.click({ position: { x: 12, y: 12 } });
+  await expect(canvas).toBeFocused();
+  await page.keyboard.press('+');
+  await expect(page.locator('[data-workspace]')).toHaveAttribute('data-canvas-zoom', '1.1');
+  await page.keyboard.press('0');
+  await expect(page.locator('[data-workspace]')).toHaveAttribute('data-canvas-zoom', '1');
+  await page.keyboard.press('f');
+  await expect(page.getByRole('button', { name: '我的心智圖', exact: true })).toBeFocused();
 
   const downloadPromise = page.waitForEvent('download');
   await page.locator('[data-file-action="export"]').click();
@@ -77,13 +92,14 @@ test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
   });
   await expect(page.getByRole('button', { name: '匯入後標題', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /復原/ }).click();
-  await expect(page.getByRole('button', { name: '未命名心智圖', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '我的心智圖', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /重做/ }).click();
   await expect(page.getByRole('button', { name: '匯入後標題', exact: true })).toBeVisible();
 
   await expect(page.locator('.app-status')).toHaveText('已保存到本機');
   await page.reload();
   await expect(page.getByRole('button', { name: '匯入後標題', exact: true })).toBeVisible();
+  await expect(page.getByText('已匯出原生檔')).toBeVisible();
 
   await context.setOffline(true);
   await expect(page.locator('.app-status')).toHaveText('離線模式');
