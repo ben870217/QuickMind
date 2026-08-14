@@ -22,6 +22,19 @@ class MemoryWorkspaceStore implements WorkspaceStore {
   }
 }
 
+class FailingWorkspaceStore extends MemoryWorkspaceStore {
+  failuresRemaining = 0;
+
+  override async save(document: QuickMindDocument): Promise<void> {
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1;
+      throw new Error('save failed');
+    }
+
+    await super.save(document);
+  }
+}
+
 describe('DocumentWorkflow', () => {
   it('creates and immediately saves a new local document when none exists', async () => {
     const store = new MemoryWorkspaceStore();
@@ -476,5 +489,92 @@ describe('DocumentWorkflow', () => {
     const redone = workflow.redo();
     expect(redone.document.meta.id).toBe('imported-document-id');
     expect(redone.hasUnexportedChanges).toBe(false);
+  });
+
+  it('rejects a node addition over the 10,000-node limit atomically', async () => {
+    const store = new MemoryWorkspaceStore();
+    const root = {
+      id: 'root-id',
+      text: '根節點',
+      isCollapsed: false,
+      children: Array.from({ length: 9_999 }, (_, index) => ({
+        id: `child-${index}`,
+        text: `節點${index}`,
+        isCollapsed: false,
+        children: [],
+      })),
+    };
+    const document = {
+      meta: {
+        id: 'document-id',
+        schemaVersion: 1 as const,
+        createdAt: '2026-08-14T00:00:00.000Z',
+        updatedAt: '2026-08-14T00:00:00.000Z',
+      },
+      root,
+    };
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => document,
+      createId: () => 'new-child-id',
+      saveDelayMs: 10_000,
+    });
+    await workflow.start();
+    const before = workflow.getState();
+
+    workflow.addChild('root-id');
+    const after = workflow.getState();
+    expect(after.document).toEqual(before.document);
+    expect(after.document.meta.updatedAt).toBe(before.document.meta.updatedAt);
+    expect(after.editing).toBeNull();
+    expect(after.canUndo).toBe(false);
+    expect(after.limitError?.reason).toBe('node-count');
+    expect(after.limitError?.nodeCount).toBe(10_001);
+    expect(store.saveCount).toBe(1);
+  });
+
+  it('keeps memory content on save failure and allows a successful retry', async () => {
+    const store = new FailingWorkspaceStore();
+    store.failuresRemaining = 4;
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: (() => {
+          const ids = ['document-id', 'root-id'];
+          return () => ids.shift() ?? 'unused';
+        })(),
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      saveRetryDelaysMs: [0, 0, 0],
+    });
+    const state = await workflow.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(workflow.getState().persistence).toBe('error');
+    expect(workflow.getState().document).toEqual(state.document);
+
+    store.failuresRemaining = 0;
+    workflow.retrySave();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(workflow.getState().persistence).toBe('saved');
+    expect(store.document).toEqual(state.document);
+  });
+
+  it('clears the local copy into a new document and resets history', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'replacement-document-id', 'replacement-root-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+    });
+    await workflow.start();
+    const cleared = await workflow.clearDocument();
+
+    expect(cleared.document.meta.id).toBe('replacement-document-id');
+    expect(cleared.document.root.id).toBe('replacement-root-id');
+    expect(cleared.restored).toBe(false);
+    expect(cleared.canUndo).toBe(false);
+    expect(cleared.hasUnexportedChanges).toBe(true);
+    expect(store.document?.meta.id).toBe('replacement-document-id');
   });
 });

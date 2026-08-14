@@ -9,6 +9,11 @@ import {
 export const MAX_QUICKMIND_FILE_BYTES = 10 * 1024 * 1024;
 export const MAX_QUICKMIND_NODE_COUNT = 10_000;
 
+export interface QuickMindDocumentUsage {
+  byteLength: number;
+  nodeCount: number;
+}
+
 export type QuickMindFormatErrorCode =
   | 'invalid-json'
   | 'duplicate-key'
@@ -66,6 +71,24 @@ export function parseQuickMindDocument(source: string): QuickMindDocument {
 
   assertNoDuplicateKeys(source);
   return validateQuickMindDocument(parsed);
+}
+
+export function measureQuickMindDocument(document: QuickMindDocument): QuickMindDocumentUsage {
+  let nodeCount = 0;
+  const pending: QuickMindNode[] = [document.root];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (!node) {
+      continue;
+    }
+    nodeCount += 1;
+    pending.push(...node.children);
+  }
+
+  return {
+    byteLength: new TextEncoder().encode(JSON.stringify(document, null, 2)).byteLength,
+    nodeCount,
+  };
 }
 
 export function validateQuickMindDocument(value: unknown): QuickMindDocument {

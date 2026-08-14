@@ -127,6 +127,16 @@ h1 {
   background: #f8eee5;
 }
 
+.file-button:disabled {
+  color: #b5a79e;
+  background: #eee8e1;
+  cursor: not-allowed;
+}
+
+.file-button-danger {
+  color: #865b53;
+}
+
 .file-button:focus-visible {
   outline: 3px solid #8ca89a;
   outline-offset: 2px;

@@ -8,6 +8,12 @@ import {
   type QuickMindDocument,
   type QuickMindNode,
 } from '../domain/document';
+import {
+  MAX_QUICKMIND_FILE_BYTES,
+  MAX_QUICKMIND_NODE_COUNT,
+  measureQuickMindDocument,
+  type QuickMindDocumentUsage,
+} from '../domain/quickmind-format';
 import type { WorkspaceStore } from '../persistence/workspace-store';
 
 export type PersistenceStatus = 'saving' | 'saved' | 'error';
@@ -15,6 +21,7 @@ export type ConnectivityStatus = 'online' | 'offline';
 export type NavigationDirection = 'up' | 'down' | 'left' | 'right';
 export type MovePosition = 'before' | 'inside' | 'after';
 export const MAX_HISTORY_ENTRIES = 100;
+export const MAX_AUTOMATIC_SAVE_RETRIES = 3;
 
 export interface WorkspaceState {
   document: QuickMindDocument;
@@ -24,8 +31,15 @@ export interface WorkspaceState {
   selectionId: string | null;
   editing: EditingState | null;
   hasUnexportedChanges: boolean;
+  limitError: DocumentLimitError | null;
   canUndo: boolean;
   canRedo: boolean;
+}
+
+export interface DocumentLimitError extends QuickMindDocumentUsage {
+  reason: 'file-size' | 'node-count';
+  maxBytes: number;
+  maxNodes: number;
 }
 
 export interface EditingState {
@@ -40,6 +54,7 @@ export interface DocumentWorkflowOptions {
   now?: () => string;
   initialConnectivity?: ConnectivityStatus;
   saveDelayMs?: number;
+  saveRetryDelaysMs?: number[];
 }
 
 interface HistoryEntry {
@@ -58,10 +73,13 @@ export class DocumentWorkflow {
   private readonly createId: () => string;
   private readonly now: () => string;
   private readonly saveDelayMs: number;
+  private readonly saveRetryDelaysMs: number[];
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private saveRetryIndex = 0;
   private undoStack: HistoryEntry[] = [];
   private redoStack: HistoryEntry[] = [];
   private pendingEditBefore: QuickMindDocument | null = null;
+  private readonly listeners = new Set<() => void>();
 
   constructor(
     private readonly store: WorkspaceStore,
@@ -72,9 +90,12 @@ export class DocumentWorkflow {
     this.createId = options.createId ?? (() => globalThis.crypto.randomUUID());
     this.now = options.now ?? (() => new Date().toISOString());
     this.saveDelayMs = options.saveDelayMs ?? 500;
+    this.saveRetryDelaysMs = options.saveRetryDelaysMs ?? [250, 1_000, 4_000];
   }
 
   async start(): Promise<WorkspaceState> {
+    this.clearSaveTimer();
+    this.saveRetryIndex = 0;
     this.undoStack = [];
     this.redoStack = [];
     this.pendingEditBefore = null;
@@ -89,6 +110,7 @@ export class DocumentWorkflow {
         selectionId: null,
         editing: null,
         hasUnexportedChanges: true,
+        limitError: this.getDocumentLimitError(savedDocument),
       };
 
       return this.getState();
@@ -103,13 +125,18 @@ export class DocumentWorkflow {
       selectionId: null,
       editing: null,
       hasUnexportedChanges: true,
+      limitError: null,
     };
 
     try {
       await this.store.save(document);
       this.state.persistence = 'saved';
+      this.saveRetryIndex = 0;
     } catch {
-      this.state.persistence = 'error';
+      this.state.persistence = 'saving';
+      if (!this.scheduleSaveRetry()) {
+        this.state.persistence = 'error';
+      }
     }
 
     return this.getState();
@@ -121,8 +148,17 @@ export class DocumentWorkflow {
     return this.getState();
   }
 
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   replaceDocument(document: QuickMindDocument): boolean {
     const state = this.requireState();
+    if (state.persistence === 'error' || this.getDocumentLimitError(document)) {
+      state.limitError = this.getDocumentLimitError(document);
+      return false;
+    }
     if (JSON.stringify(state.document) === JSON.stringify(document)) {
       return false;
     }
@@ -134,6 +170,7 @@ export class DocumentWorkflow {
     state.editing = null;
     this.pendingEditBefore = null;
     state.hasUnexportedChanges = false;
+    state.limitError = null;
     state.persistence = 'saving';
     this.recordHistory(beforeDocument, beforeHasUnexportedChanges);
     this.saveImmediately();
@@ -144,6 +181,62 @@ export class DocumentWorkflow {
   markExported(): WorkspaceState {
     const state = this.requireState();
     state.hasUnexportedChanges = false;
+
+    return this.getState();
+  }
+
+  retrySave(): WorkspaceState {
+    const state = this.requireState();
+    if (state.persistence !== 'error') {
+      return this.getState();
+    }
+
+    this.clearSaveTimer();
+    this.saveRetryIndex = 0;
+    state.persistence = 'saving';
+    void this.persistCurrentDocument();
+
+    return this.getState();
+  }
+
+  async clearDocument(): Promise<WorkspaceState> {
+    const state = this.requireState();
+    if (state.persistence === 'error') {
+      return this.getState();
+    }
+
+    this.clearSaveTimer();
+    try {
+      await this.store.clear();
+    } catch {
+      state.persistence = 'error';
+      return this.getState();
+    }
+
+    const document = this.createDocument();
+    this.undoStack = [];
+    this.redoStack = [];
+    this.pendingEditBefore = null;
+    state.document = document;
+    state.persistence = 'saving';
+    state.connectivity = this.initialConnectivity;
+    state.restored = false;
+    state.selectionId = null;
+    state.editing = null;
+    state.hasUnexportedChanges = true;
+    state.limitError = null;
+    this.saveRetryIndex = 0;
+
+    try {
+      await this.store.save(document);
+      state.persistence = 'saved';
+      this.saveRetryIndex = 0;
+    } catch {
+      state.persistence = 'saving';
+      if (!this.scheduleSaveRetry()) {
+        state.persistence = 'error';
+      }
+    }
 
     return this.getState();
   }
@@ -186,8 +279,18 @@ export class DocumentWorkflow {
       throw new Error(`Node ${parentId} does not exist`);
     }
 
-    this.pendingEditBefore = structuredClone(state.document);
     const node = this.createEmptyNode();
+    const candidate = structuredClone(state.document);
+    const candidateParent = findNode(candidate.root, parentId);
+    if (!candidateParent) {
+      throw new Error(`Node ${parentId} does not exist`);
+    }
+    candidateParent.children.push(structuredClone(node));
+    if (!this.acceptDocumentCandidate(candidate)) {
+      return this.getState();
+    }
+
+    this.pendingEditBefore = structuredClone(state.document);
     parent.children.push(node);
     state.selectionId = node.id;
     state.editing = {
@@ -207,8 +310,18 @@ export class DocumentWorkflow {
       return this.getState();
     }
 
-    this.pendingEditBefore = structuredClone(state.document);
     const node = this.createEmptyNode();
+    const candidate = structuredClone(state.document);
+    const candidateParent = findNode(candidate.root, location.parent.id);
+    if (!candidateParent) {
+      throw new Error(`Node ${location.parent.id} does not exist`);
+    }
+    candidateParent.children.splice(location.index + 1, 0, structuredClone(node));
+    if (!this.acceptDocumentCandidate(candidate)) {
+      return this.getState();
+    }
+
+    this.pendingEditBefore = structuredClone(state.document);
     location.parent.children.splice(location.index + 1, 0, node);
     state.selectionId = node.id;
     state.editing = {
@@ -250,6 +363,18 @@ export class DocumentWorkflow {
     }
 
     const changed = node.text !== normalized;
+    if (changed) {
+      const candidate = structuredClone(state.document);
+      const candidateNode = findNode(candidate.root, editing.nodeId);
+      if (!candidateNode) {
+        throw new Error(`Node ${editing.nodeId} does not exist`);
+      }
+      candidateNode.text = normalized;
+      if (!this.acceptDocumentCandidate(candidate)) {
+        return false;
+      }
+    }
+
     const beforeDocument = editing.isNew
       ? this.pendingEditBefore ?? structuredClone(state.document)
       : structuredClone(state.document);
@@ -258,7 +383,7 @@ export class DocumentWorkflow {
     this.pendingEditBefore = null;
 
     if (changed) {
-      this.markChanged(beforeDocument);
+      this.markChanged(beforeDocument, editing.isNew);
     }
 
     return true;
@@ -300,7 +425,7 @@ export class DocumentWorkflow {
     const fallback = parent.children[location.index - 1] ?? parent.children[location.index] ?? parent;
     state.selectionId = fallback.id;
     state.editing = null;
-    this.markChanged(beforeDocument);
+    this.markChanged(beforeDocument, true);
 
     return this.getState();
   }
@@ -314,6 +439,16 @@ export class DocumentWorkflow {
 
     const node = findNode(state.document.root, nodeId);
     if (!node || node.children.length === 0) {
+      return this.getState();
+    }
+
+    const candidate = structuredClone(state.document);
+    const candidateNode = findNode(candidate.root, nodeId);
+    if (!candidateNode) {
+      throw new Error(`Node ${nodeId} does not exist`);
+    }
+    candidateNode.isCollapsed = !candidateNode.isCollapsed;
+    if (!this.acceptDocumentCandidate(candidate)) {
       return this.getState();
     }
 
@@ -353,28 +488,16 @@ export class DocumentWorkflow {
     }
 
     const beforeDocument = structuredClone(state.document);
-    const source = sourceLocation.node;
-    sourceLocation.parent.children.splice(sourceLocation.index, 1);
-
-    if (position === 'inside') {
-      const target = findNode(state.document.root, targetId);
-      if (!target) {
-        throw new Error(`Node ${targetId} does not exist`);
-      }
-      target.children.push(source);
-    } else {
-      const targetLocation = findNodeLocation(state.document.root, targetId);
-      if (!targetLocation?.parent) {
-        throw new Error(`Node ${targetId} cannot be a sibling target`);
-      }
-
-      const insertionIndex = targetLocation.index + (position === 'after' ? 1 : 0);
-      targetLocation.parent.children.splice(insertionIndex, 0, source);
+    const candidate = structuredClone(state.document);
+    this.moveNodeInDocument(candidate, nodeId, targetId, position);
+    if (!this.acceptDocumentCandidate(candidate)) {
+      return this.getState();
     }
 
-    state.selectionId = source.id;
+    this.moveNodeInDocument(state.document, nodeId, targetId, position);
+    state.selectionId = nodeId;
     state.editing = null;
-    this.markChanged(beforeDocument);
+    this.markChanged(beforeDocument, true);
 
     return this.getState();
   }
@@ -406,6 +529,16 @@ export class DocumentWorkflow {
 
     if (direction === 'left') {
       if (current.children.length > 0 && !current.isCollapsed) {
+        const candidate = structuredClone(state.document);
+        const candidateNode = findNode(candidate.root, current.id);
+        if (!candidateNode) {
+          throw new Error(`Node ${current.id} does not exist`);
+        }
+        candidateNode.isCollapsed = true;
+        if (!this.acceptDocumentCandidate(candidate)) {
+          return this.getState();
+        }
+
         const beforeDocument = structuredClone(state.document);
         current.isCollapsed = true;
         this.markChanged(beforeDocument);
@@ -420,6 +553,16 @@ export class DocumentWorkflow {
     }
 
     if (current.children.length > 0 && current.isCollapsed) {
+      const candidate = structuredClone(state.document);
+      const candidateNode = findNode(candidate.root, current.id);
+      if (!candidateNode) {
+        throw new Error(`Node ${current.id} does not exist`);
+      }
+      candidateNode.isCollapsed = false;
+      if (!this.acceptDocumentCandidate(candidate)) {
+        return this.getState();
+      }
+
       const beforeDocument = structuredClone(state.document);
       current.isCollapsed = false;
       this.markChanged(beforeDocument);
@@ -506,6 +649,33 @@ export class DocumentWorkflow {
     };
   }
 
+  private moveNodeInDocument(document: QuickMindDocument, nodeId: string, targetId: string, position: MovePosition): void {
+    const sourceLocation = findNodeLocation(document.root, nodeId);
+    if (!sourceLocation?.parent) {
+      throw new Error(`Node ${nodeId} cannot be moved`);
+    }
+
+    const source = sourceLocation.node;
+    sourceLocation.parent.children.splice(sourceLocation.index, 1);
+
+    if (position === 'inside') {
+      const target = findNode(document.root, targetId);
+      if (!target) {
+        throw new Error(`Node ${targetId} does not exist`);
+      }
+      target.children.push(source);
+      return;
+    }
+
+    const targetLocation = findNodeLocation(document.root, targetId);
+    if (!targetLocation?.parent) {
+      throw new Error(`Node ${targetId} cannot be a sibling target`);
+    }
+
+    const insertionIndex = targetLocation.index + (position === 'after' ? 1 : 0);
+    targetLocation.parent.children.splice(insertionIndex, 0, source);
+  }
+
   private removePendingNode(nodeId: string): void {
     const state = this.requireState();
     const location = findNodeLocation(state.document.root, nodeId);
@@ -527,14 +697,48 @@ export class DocumentWorkflow {
     return state.document.root.id;
   }
 
-  private markChanged(beforeDocument: QuickMindDocument): void {
+  private getDocumentLimitError(document: QuickMindDocument): DocumentLimitError | null {
+    const usage = measureQuickMindDocument(document);
+    if (usage.nodeCount > MAX_QUICKMIND_NODE_COUNT) {
+      return {
+        ...usage,
+        reason: 'node-count',
+        maxBytes: MAX_QUICKMIND_FILE_BYTES,
+        maxNodes: MAX_QUICKMIND_NODE_COUNT,
+      };
+    }
+    if (usage.byteLength > MAX_QUICKMIND_FILE_BYTES) {
+      return {
+        ...usage,
+        reason: 'file-size',
+        maxBytes: MAX_QUICKMIND_FILE_BYTES,
+        maxNodes: MAX_QUICKMIND_NODE_COUNT,
+      };
+    }
+
+    return null;
+  }
+
+  private acceptDocumentCandidate(candidate: QuickMindDocument): boolean {
+    const state = this.requireState();
+    const limitError = this.getDocumentLimitError(candidate);
+    state.limitError = limitError;
+    return limitError === null;
+  }
+
+  private markChanged(beforeDocument: QuickMindDocument, saveImmediately = false): void {
     const state = this.requireState();
     const beforeHasUnexportedChanges = state.hasUnexportedChanges;
     state.document.meta.updatedAt = this.now();
     state.hasUnexportedChanges = true;
+    state.limitError = null;
     state.persistence = 'saving';
     this.recordHistory(beforeDocument, beforeHasUnexportedChanges);
-    this.scheduleSave();
+    if (saveImmediately) {
+      this.saveImmediately();
+    } else {
+      this.scheduleSave();
+    }
   }
 
   private recordHistory(beforeDocument: QuickMindDocument, beforeHasUnexportedChanges: boolean): void {
@@ -556,6 +760,7 @@ export class DocumentWorkflow {
       clearTimeout(this.saveTimer);
     }
 
+    this.saveRetryIndex = 0;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       void this.persistCurrentDocument();
@@ -563,14 +768,34 @@ export class DocumentWorkflow {
   }
 
   private saveImmediately(): void {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
+    this.clearSaveTimer();
+    this.saveRetryIndex = 0;
 
     const state = this.requireState();
     state.persistence = 'saving';
     void this.persistCurrentDocument();
+  }
+
+  private scheduleSaveRetry(): boolean {
+    const delay = this.saveRetryDelaysMs[this.saveRetryIndex];
+    if (delay === undefined) {
+      return false;
+    }
+
+    this.saveRetryIndex += 1;
+    this.clearSaveTimer();
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      void this.persistCurrentDocument();
+    }, delay);
+    return true;
+  }
+
+  private clearSaveTimer(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
   }
 
   private async persistCurrentDocument(): Promise<void> {
@@ -579,8 +804,18 @@ export class DocumentWorkflow {
     try {
       await this.store.save(state.document);
       state.persistence = 'saved';
+      this.saveRetryIndex = 0;
+      this.notify();
     } catch {
-      state.persistence = 'error';
+      state.persistence = 'saving';
+      if (!this.scheduleSaveRetry()) {
+        state.persistence = 'error';
+        this.notify();
+      }
     }
+  }
+
+  private notify(): void {
+    this.listeners.forEach((listener) => listener());
   }
 }

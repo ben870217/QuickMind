@@ -142,12 +142,37 @@ export function bindWorkspaceInteractions(
 
   const onClick = (event: MouseEvent): void => {
     const target = event.target as HTMLElement;
+    const persistenceAction = target.closest<HTMLButtonElement>('[data-persistence-action]');
+    if (persistenceAction?.dataset.persistenceAction === 'retry') {
+      workflow.retrySave();
+      render();
+      showFileMessage('正在重試保存本機工作副本。');
+      return;
+    }
+
     const fileAction = target.closest<HTMLButtonElement>('[data-file-action]');
     if (fileAction) {
       if (fileAction.dataset.fileAction === 'import') {
         workspace.querySelector<HTMLInputElement>('[data-native-file-input]')?.click();
       } else if (fileAction.dataset.fileAction === 'export') {
         exportDocument();
+      } else if (fileAction.dataset.fileAction === 'clear') {
+        const state = workflow.getState();
+        const confirmation = state.hasUnexportedChanges
+          ? '目前有尚未匯出的變更，確定要清除本機工作副本並建立新文件嗎？'
+          : '確定要清除本機工作副本並建立新文件嗎？';
+        if (!window.confirm(confirmation)) {
+          showFileMessage('已取消清除，原文件未變更。');
+          return;
+        }
+
+        void workflow.clearDocument().then((nextState) => {
+          render();
+          showFileMessage(
+            nextState.persistence === 'error' ? '清除後的新文件未保存到本機。' : '已清除並建立新的本機文件。',
+            nextState.persistence === 'error' ? 'save-failed' : undefined,
+          );
+        });
       }
       return;
     }
@@ -244,11 +269,14 @@ export function bindWorkspaceInteractions(
   const exportDocument = (): void => {
     try {
       const state = workflow.getState();
+      const rescue = state.persistence === 'error';
       const source = serializeQuickMindDocument(state.document);
       downloadTextFile(source, createQuickMindFilename(state.document.root.text));
-      workflow.markExported();
+      if (!rescue) {
+        workflow.markExported();
+      }
       render();
-      showFileMessage('已匯出 QuickMind 原生檔案。');
+      showFileMessage(rescue ? '已匯出救援檔案；本機保存警告仍然存在。' : '已匯出 QuickMind 原生檔案。');
     } catch (error) {
       const detail = error instanceof QuickMindFormatError ? `${error.code} at ${error.path}` : 'export-failed';
       showFileMessage('匯出失敗，文件內容仍保留在目前工作區。', detail);
@@ -256,6 +284,11 @@ export function bindWorkspaceInteractions(
   };
 
   const importFile = async (file: File): Promise<void> => {
+    if (workflow.getState().persistence === 'error') {
+      showFileMessage('目前未保存到本機，請先重試保存或匯出救援檔案；原文件未變更。', 'save-failed');
+      return;
+    }
+
     if (!file.name.toLowerCase().endsWith('.quickmind')) {
       showFileMessage('匯入失敗：只接受 .quickmind 檔案。', 'invalid-file-extension');
       return;

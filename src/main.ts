@@ -30,9 +30,14 @@ const workflow = new DocumentWorkflow(new IndexedDbWorkspaceStore());
 function renderState(): void {
   const state = workflow.getState();
   renderWorkspace(workspaceElement, state);
-  statusElement.textContent = state.connectivity === 'offline' ? '離線模式' : '已保存到本機';
+  statusElement.textContent = state.persistence === 'error'
+    ? '未保存到本機'
+    : state.persistence === 'saving'
+      ? '保存中'
+      : state.connectivity === 'offline' ? '離線模式' : '已保存到本機';
 }
 
+workflow.subscribe(renderState);
 bindWorkspaceInteractions(workspaceElement, workflow, renderState);
 
 window.addEventListener('online', () => {
