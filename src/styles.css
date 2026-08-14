@@ -73,6 +73,64 @@ h1 {
   padding: 2rem;
 }
 
+.document-workspace {
+  width: min(52rem, 100%);
+}
+
+.workspace-toolbar {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.workspace-badge {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #d9d0c5;
+  border-radius: 999px;
+  color: #6f625c;
+  background: rgba(255, 252, 248, 0.78);
+  font-size: 0.8rem;
+}
+
+.root-node {
+  padding: 3rem;
+  border: 1px solid #cbb8ab;
+  border-radius: 1.25rem;
+  background: #fffaf4;
+  box-shadow: 0 1.5rem 4rem rgba(85, 71, 62, 0.1);
+  text-align: center;
+}
+
+.node-kicker {
+  margin-bottom: 0.75rem;
+  color: #8b7369;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.root-node h2 {
+  margin: 0;
+  color: #453c39;
+  font-size: clamp(1.7rem, 4vw, 2.6rem);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.workspace-hint,
+.workspace-error {
+  margin: 1rem 0 0;
+  color: #746862;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.workspace-error {
+  color: #9b554d;
+}
+
 .canvas-placeholder {
   width: min(42rem, 100%);
   padding: 3rem;
