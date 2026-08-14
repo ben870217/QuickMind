@@ -133,7 +133,7 @@ export function validateQuickMindDocument(value: unknown): QuickMindDocument {
   const ids = new Set<string>([documentId]);
   let nodeCount = 0;
 
-  const root = validateNode(value.root, '$.root', ids, () => {
+  const root = validateTree(value.root, ids, () => {
     nodeCount += 1;
     if (nodeCount > MAX_QUICKMIND_NODE_COUNT) {
       throw new QuickMindFormatError('node-limit', '$.root', {
@@ -176,38 +176,72 @@ export function createQuickMindFilename(rootTitle: string): string {
   return `${base}${FILENAME_EXTENSION}`;
 }
 
-function validateNode(
+interface NodeValidationFrame {
+  value: unknown;
+  path: string;
+  parentChildren: QuickMindNode[] | null;
+  index: number;
+}
+
+function validateTree(
   value: unknown,
-  path: string,
   ids: Set<string>,
   countNode: () => void,
 ): QuickMindNode {
-  if (!isRecord(value)) {
-    throw new QuickMindFormatError('invalid-node', path);
+  const stack: NodeValidationFrame[] = [{ value, path: '$.root', parentChildren: null, index: 0 }];
+  let root: QuickMindNode | null = null;
+
+  while (stack.length > 0) {
+    const frame = stack.pop();
+    if (!frame) {
+      continue;
+    }
+    if (!isRecord(frame.value)) {
+      throw new QuickMindFormatError('invalid-node', frame.path);
+    }
+
+    assertExactKeys(frame.value, ['id', 'text', 'isCollapsed', 'children'], frame.path);
+    const id = readUuid(frame.value.id, `${frame.path}.id`);
+    if (ids.has(id)) {
+      throw new QuickMindFormatError('duplicate-id', `${frame.path}.id`);
+    }
+    ids.add(id);
+
+    if (typeof frame.value.text !== 'string' || normalizeNodeTitle(frame.value.text) !== frame.value.text || !frame.value.text || countUserVisibleCharacters(frame.value.text) > MAX_NODE_TITLE_LENGTH) {
+      throw new QuickMindFormatError('invalid-node', `${frame.path}.text`);
+    }
+    if (typeof frame.value.isCollapsed !== 'boolean' || !Array.isArray(frame.value.children)) {
+      throw new QuickMindFormatError('invalid-node', frame.path);
+    }
+
+    countNode();
+    const node: QuickMindNode = {
+      id,
+      text: frame.value.text,
+      isCollapsed: frame.value.isCollapsed,
+      children: [],
+    };
+    if (frame.parentChildren) {
+      frame.parentChildren[frame.index] = node;
+    } else {
+      root = node;
+    }
+
+    for (let index = frame.value.children.length - 1; index >= 0; index -= 1) {
+      stack.push({
+        value: frame.value.children[index],
+        path: `${frame.path}.children[${index}]`,
+        parentChildren: node.children,
+        index,
+      });
+    }
   }
 
-  assertExactKeys(value, ['id', 'text', 'isCollapsed', 'children'], path);
-  const id = readUuid(value.id, `${path}.id`);
-  if (ids.has(id)) {
-    throw new QuickMindFormatError('duplicate-id', `${path}.id`);
-  }
-  ids.add(id);
-
-  if (typeof value.text !== 'string' || normalizeNodeTitle(value.text) !== value.text || !value.text || countUserVisibleCharacters(value.text) > MAX_NODE_TITLE_LENGTH) {
-    throw new QuickMindFormatError('invalid-node', `${path}.text`);
-  }
-  if (typeof value.isCollapsed !== 'boolean' || !Array.isArray(value.children)) {
-    throw new QuickMindFormatError('invalid-node', path);
+  if (!root) {
+    throw new QuickMindFormatError('invalid-node', '$.root');
   }
 
-  countNode();
-
-  return {
-    id,
-    text: value.text,
-    isCollapsed: value.isCollapsed,
-    children: value.children.map((child, index) => validateNode(child, `${path}.children[${index}]`, ids, countNode)),
-  };
+  return root;
 }
 
 function readUuid(value: unknown, path: string): string {

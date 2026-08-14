@@ -74,6 +74,9 @@ test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
   await expect(page.locator('[data-workspace]')).toHaveAttribute('data-canvas-zoom', '1');
   await page.keyboard.press('f');
   await expect(page.getByRole('button', { name: '我的心智圖', exact: true })).toBeFocused();
+  await canvas.focus();
+  await page.keyboard.press('+');
+  await expect(page.locator('[data-workspace]')).toHaveAttribute('data-canvas-zoom', '1.1');
 
   const downloadPromise = page.waitForEvent('download');
   await page.locator('[data-file-action="export"]').click();
@@ -91,6 +94,7 @@ test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
     buffer: Buffer.from(JSON.stringify(importedDocument)),
   });
   await expect(page.getByRole('button', { name: '匯入後標題', exact: true })).toBeVisible();
+  await expect(page.locator('[data-workspace]')).toHaveAttribute('data-canvas-zoom', '1');
   await page.getByRole('button', { name: /復原/ }).click();
   await expect(page.getByRole('button', { name: '我的心智圖', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /重做/ }).click();

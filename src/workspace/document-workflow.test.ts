@@ -202,6 +202,31 @@ describe('DocumentWorkflow', () => {
     expect(state.document.meta.updatedAt).toBe('2026-08-14T00:00:00.000Z');
   });
 
+  it('does not let an uncommitted blank node enter another document operation', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'child-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+      saveDelayMs: 10_000,
+    });
+    const initial = await workflow.start();
+
+    workflow.addChild(initial.document.root.id);
+    const blocked = workflow.toggleCollapse(initial.document.root.id);
+    expect(blocked.document.root.isCollapsed).toBe(false);
+    expect(store.saveCount).toBe(1);
+
+    workflow.selectNode(initial.document.root.id);
+    const state = workflow.getState();
+    expect(state.editing).toBeNull();
+    expect(state.document.root.children).toHaveLength(0);
+    expect(store.saveCount).toBe(1);
+  });
+
   it('rejects a title longer than the visible character limit', async () => {
     const store = new MemoryWorkspaceStore();
     const ids = ['document-id', 'root-id', 'child-id'];

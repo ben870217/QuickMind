@@ -76,9 +76,7 @@ export function bindWorkspaceInteractions(
 
   const renderFocused = (state: ReturnType<DocumentWorkflow['getState']>): void => {
     render();
-    const restoreFocus = (): void => focusNode(state.selectionId);
-    restoreFocus();
-    window.requestAnimationFrame(restoreFocus);
+    focusNode(state.selectionId);
   };
 
   const updateTitleCounter = (editor: HTMLInputElement): void => {
@@ -289,6 +287,11 @@ export function bindWorkspaceInteractions(
       return;
     }
 
+    if (workflow.getState().editing?.isNew) {
+      event.preventDefault();
+      return;
+    }
+
     event.preventDefault();
     workflow.selectNode(nodeId);
     render();
@@ -383,6 +386,9 @@ export function bindWorkspaceInteractions(
     try {
       const document = parseQuickMindDocument(await file.text());
       const changed = workflow.replaceDocument(document);
+      if (changed) {
+        setCanvasView({ zoom: 1, panX: 0, panY: 0 });
+      }
       render();
       showFileMessage(changed ? '已匯入 QuickMind 原生檔案。' : '匯入內容與目前文件相同，未產生變更。');
     } catch (error) {

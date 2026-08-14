@@ -277,6 +277,12 @@ export class DocumentWorkflow {
   selectNode(nodeId: string | null): WorkspaceState {
     const state = this.requireState();
 
+    if (state.editing?.isNew && nodeId !== state.editing.nodeId) {
+      this.removePendingNode(state.editing.nodeId);
+      state.editing = null;
+      this.pendingEditBefore = null;
+    }
+
     if (nodeId !== null && !findNode(state.document.root, nodeId)) {
       throw new Error(`Node ${nodeId} does not exist`);
     }
@@ -306,6 +312,9 @@ export class DocumentWorkflow {
 
   addChild(parentId: string): WorkspaceState {
     const state = this.requireState();
+    if (state.editing?.isNew) {
+      return this.getState();
+    }
     const parent = findNode(state.document.root, parentId);
 
     if (!parent) {
@@ -337,6 +346,9 @@ export class DocumentWorkflow {
 
   addSibling(nodeId: string): WorkspaceState {
     const state = this.requireState();
+    if (state.editing?.isNew) {
+      return this.getState();
+    }
     const location = findNodeLocation(state.document.root, nodeId);
 
     if (!location?.parent) {
@@ -443,6 +455,10 @@ export class DocumentWorkflow {
   deleteNode(nodeId: string | null = this.requireState().selectionId): WorkspaceState {
     const state = this.requireState();
 
+    if (state.editing?.isNew) {
+      return this.getState();
+    }
+
     if (!nodeId) {
       return this.getState();
     }
@@ -465,6 +481,10 @@ export class DocumentWorkflow {
 
   toggleCollapse(nodeId: string | null = this.requireState().selectionId): WorkspaceState {
     const state = this.requireState();
+
+    if (state.editing?.isNew) {
+      return this.getState();
+    }
 
     if (!nodeId) {
       return this.getState();
@@ -495,6 +515,9 @@ export class DocumentWorkflow {
 
   canMoveNode(nodeId: string, targetId: string, position: MovePosition = 'inside'): boolean {
     const state = this.requireState();
+    if (state.editing?.isNew) {
+      return false;
+    }
     const sourceLocation = findNodeLocation(state.document.root, nodeId);
     const targetLocation = findNodeLocation(state.document.root, targetId);
 
@@ -511,6 +534,9 @@ export class DocumentWorkflow {
 
   moveNode(nodeId: string, targetId: string, position: MovePosition): WorkspaceState {
     const state = this.requireState();
+    if (state.editing?.isNew) {
+      return this.getState();
+    }
     if (!this.canMoveNode(nodeId, targetId, position)) {
       return this.getState();
     }
@@ -537,6 +563,10 @@ export class DocumentWorkflow {
 
   navigate(direction: NavigationDirection): WorkspaceState {
     const state = this.requireState();
+
+    if (state.editing?.isNew) {
+      return this.getState();
+    }
 
     if (!state.selectionId) {
       state.selectionId = state.document.root.id;

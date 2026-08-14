@@ -48,7 +48,6 @@ function renderState(): void {
       focusTarget?.focus();
     };
     restoreFocus();
-    window.requestAnimationFrame(restoreFocus);
   }
 }
 
@@ -79,7 +78,7 @@ window.addEventListener('offline', () => {
 
 const flushBeforePageHide = (): void => {
   try {
-    void workflow.flushSave();
+    void workflow.flushSave().catch(() => undefined);
   } catch {
     // The app may be hiding before the asynchronous workspace bootstrap completes.
   }

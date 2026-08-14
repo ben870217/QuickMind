@@ -6,6 +6,7 @@ import {
   parseQuickMindDocument,
   QuickMindFormatError,
   serializeQuickMindDocument,
+  validateQuickMindDocument,
 } from './quickmind-format';
 import type { QuickMindDocument } from './document';
 
@@ -99,6 +100,24 @@ describe('QuickMind native format', () => {
     }
     expect(nodeLimitError).toBeInstanceOf(QuickMindFormatError);
     expect((nodeLimitError as QuickMindFormatError).details).toMatchObject({ nodeCount: 10_001, maxNodes: 10_000 });
+  });
+
+  it('validates a deeply nested tree without recursive traversal', () => {
+    const deepDocument = structuredClone(documentFixture);
+    deepDocument.root.children = [];
+    let current = deepDocument.root;
+    for (let index = 0; index < 2_000; index += 1) {
+      const child = {
+        id: `00000000-0000-4000-8000-${(100 + index).toString(16).padStart(12, '0')}`,
+        text: `節點${index}`,
+        isCollapsed: false,
+        children: [],
+      };
+      current.children.push(child);
+      current = child;
+    }
+
+    expect(() => validateQuickMindDocument(deepDocument)).not.toThrow();
   });
 
   it('creates safe lower-case filenames from root titles', () => {

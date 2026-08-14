@@ -63,11 +63,10 @@ try {
   const status = await execFileAsync('git', ['-C', cloneDirectory, 'status', '--porcelain']);
   if (!status.stdout.trim()) {
     console.log('GitLab Pages already contains this artifact');
-    process.exit(0);
+  } else {
+    await execFileAsync('git', ['-C', cloneDirectory, 'commit', '-m', 'chore: publish QuickMind static site']);
+    await execFileAsync('git', [...gitArguments, '-C', cloneDirectory, 'push', 'origin', branch]);
   }
-
-  await execFileAsync('git', ['-C', cloneDirectory, 'commit', '-m', 'chore: publish QuickMind static site']);
-  await execFileAsync('git', [...gitArguments, '-C', cloneDirectory, 'push', 'origin', branch]);
 } finally {
   await rm(cloneDirectory, { recursive: true, force: true });
 }
