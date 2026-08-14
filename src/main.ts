@@ -27,9 +27,7 @@ const statusElement = status;
 
 const workflow = new DocumentWorkflow(new IndexedDbWorkspaceStore());
 
-function renderState(): void {
-  const state = workflow.getState();
-  renderWorkspace(workspaceElement, state);
+function updateStatus(state: ReturnType<DocumentWorkflow['getState']>): void {
   statusElement.textContent = state.persistence === 'error'
     ? '未保存到本機'
     : state.persistence === 'saving'
@@ -37,7 +35,36 @@ function renderState(): void {
       : state.connectivity === 'offline' ? '離線模式' : '已保存到本機';
 }
 
-workflow.subscribe(renderState);
+function renderState(): void {
+  const state = workflow.getState();
+  renderWorkspace(workspaceElement, state);
+  updateStatus(state);
+
+  if (state.selectionId) {
+    const restoreFocus = (): void => {
+      const node = Array.from(workspaceElement.querySelectorAll<HTMLElement>('[data-node-id]'))
+        .find((candidate) => candidate.dataset.nodeId === state.selectionId);
+      const focusTarget = node?.querySelector<HTMLElement>('[data-node-editor], .node-card') ?? node;
+      focusTarget?.focus();
+    };
+    restoreFocus();
+    window.requestAnimationFrame(restoreFocus);
+  }
+}
+
+function renderPersistenceState(): void {
+  const state = workflow.getState();
+  updateStatus(state);
+  const persistenceBadge = workspaceElement.querySelectorAll<HTMLElement>('.workspace-badge')[1];
+  if (persistenceBadge) {
+    persistenceBadge.textContent = state.persistence === 'error' ? '未保存到本機' : state.persistence === 'saved' ? '已保存到本機' : '保存中';
+  }
+  if (state.persistence === 'error' && !state.editing) {
+    renderState();
+  }
+}
+
+workflow.subscribe(renderPersistenceState);
 bindWorkspaceInteractions(workspaceElement, workflow, renderState);
 
 window.addEventListener('online', () => {

@@ -35,6 +35,12 @@ jobs:
       - name: Build static application
         run: npm run build
 
+      - name: Install Chromium for smoke test
+        run: npx playwright install --with-deps chromium chromium-headless-shell
+
+      - name: Run Chromium smoke test
+        run: npm run test:e2e
+
   container:
     name: Build Docker image
     needs: verify

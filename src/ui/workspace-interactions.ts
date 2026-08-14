@@ -33,6 +33,13 @@ export function bindWorkspaceInteractions(
     focusTarget?.focus();
   };
 
+  const renderFocused = (state: ReturnType<DocumentWorkflow['getState']>): void => {
+    render();
+    const restoreFocus = (): void => focusNode(state.selectionId);
+    restoreFocus();
+    window.requestAnimationFrame(restoreFocus);
+  };
+
   const closeContextMenu = (restoreFocus: boolean): void => {
     const nodeId = contextMenuNodeId;
     contextMenu?.remove();
@@ -182,15 +189,13 @@ export function bindWorkspaceInteractions(
       const state = historyButton.dataset.historyAction === 'undo'
         ? workflow.undo()
         : workflow.redo();
-      render();
-      focusNode(state.selectionId);
+      renderFocused(state);
       return;
     }
 
     const collapseButton = target.closest<HTMLButtonElement>('[data-collapse-node]');
     if (collapseButton) {
-      workflow.toggleCollapse(collapseButton.dataset.collapseNode ?? null);
-      render();
+      renderFocused(workflow.toggleCollapse(collapseButton.dataset.collapseNode ?? null));
       return;
     }
 
@@ -199,8 +204,7 @@ export function bindWorkspaceInteractions(
       return;
     }
 
-    workflow.selectNode(node.dataset.nodeId ?? null);
-    render();
+    renderFocused(workflow.selectNode(node.dataset.nodeId ?? null));
   };
 
   const onDoubleClick = (event: MouseEvent): void => {
@@ -440,13 +444,16 @@ export function bindWorkspaceInteractions(
 
       if (event.key === 'Enter') {
         event.preventDefault();
-        if (workflow.commitTitle(editor.value)) {
+        const committed = workflow.commitTitle(editor.value);
+        if (committed) {
+          renderFocused(workflow.getState());
+        } else if (workflow.getState().limitError) {
           render();
+          focusEditor();
         }
       } else if (event.key === 'Escape') {
         event.preventDefault();
-        workflow.cancelEditing();
-        render();
+        renderFocused(workflow.cancelEditing());
       }
 
       return;
@@ -458,37 +465,29 @@ export function bindWorkspaceInteractions(
     if (modifier && key === 'z') {
       event.preventDefault();
       const nextState = event.shiftKey ? workflow.redo() : workflow.undo();
-      render();
-      focusNode(nextState.selectionId);
+      renderFocused(nextState);
     } else if (event.ctrlKey && key === 'y') {
       event.preventDefault();
       const nextState = workflow.redo();
-      render();
-      focusNode(nextState.selectionId);
+      renderFocused(nextState);
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
-      workflow.navigate('up');
-      render();
+      renderFocused(workflow.navigate('up'));
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
-      workflow.navigate('down');
-      render();
+      renderFocused(workflow.navigate('down'));
     } else if (event.key === 'ArrowLeft') {
       event.preventDefault();
-      workflow.navigate('left');
-      render();
+      renderFocused(workflow.navigate('left'));
     } else if (event.key === 'ArrowRight') {
       event.preventDefault();
-      workflow.navigate('right');
-      render();
+      renderFocused(workflow.navigate('right'));
     } else if (event.key === ' ') {
       event.preventDefault();
-      workflow.toggleCollapse(state.selectionId);
-      render();
+      renderFocused(workflow.toggleCollapse(state.selectionId));
     } else if (event.key === 'Delete') {
       event.preventDefault();
-      workflow.deleteNode(state.selectionId);
-      render();
+      renderFocused(workflow.deleteNode(state.selectionId));
     } else if (!state.selectionId) {
       return;
     } else if (event.key === 'Enter') {
