@@ -1,5 +1,5 @@
 import { findNode, findNodeLocation } from '../domain/document';
-import type { DocumentWorkflow } from '../workspace/document-workflow';
+import type { DocumentWorkflow, MovePosition } from '../workspace/document-workflow';
 
 export function bindWorkspaceInteractions(
   workspace: HTMLElement,
@@ -8,6 +8,7 @@ export function bindWorkspaceInteractions(
 ): () => void {
   let contextMenu: HTMLElement | null = null;
   let contextMenuNodeId: string | null = null;
+  let draggingNodeId: string | null = null;
 
   const focusEditor = (): void => {
     const editor = workspace.querySelector<HTMLInputElement>('[data-node-editor]');
@@ -185,6 +186,99 @@ export function bindWorkspaceInteractions(
     }
   };
 
+  const clearDropIndicator = (): void => {
+    workspace.querySelectorAll<HTMLElement>('[data-drop-target]').forEach((row) => {
+      row.classList.remove('drop-before', 'drop-inside', 'drop-after');
+    });
+  };
+
+  const getDropPosition = (event: DragEvent, row: HTMLElement): MovePosition => {
+    const bounds = row.getBoundingClientRect();
+    const ratio = bounds.height > 0 ? (event.clientY - bounds.top) / bounds.height : 0.5;
+    return ratio < 0.25 ? 'before' : ratio > 0.75 ? 'after' : 'inside';
+  };
+
+  const onDragStart = (event: DragEvent): void => {
+    const target = event.target as HTMLElement;
+    const draggable = target.closest<HTMLElement>('[data-drag-node]');
+    const nodeId = draggable?.dataset.dragNode;
+    if (!draggable || !nodeId) {
+      return;
+    }
+
+    draggingNodeId = nodeId;
+    draggable.classList.add('is-dragging');
+    draggable.setAttribute('aria-grabbed', 'true');
+    event.dataTransfer?.setData('application/x-quickmind-node', nodeId);
+    event.dataTransfer?.setData('text/plain', nodeId);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+    }
+  };
+
+  const onDragOver = (event: DragEvent): void => {
+    if (event.dataTransfer?.types.includes('Files') || !draggingNodeId) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    const row = target.closest<HTMLElement>('[data-drop-target]');
+    const targetId = row?.dataset.dropTarget;
+    const position = row ? getDropPosition(event, row) : null;
+    if (!row || !targetId || !position || !workspace.contains(row) || !workflow.canMoveNode(draggingNodeId, targetId, position)) {
+      clearDropIndicator();
+      return;
+    }
+
+    event.preventDefault();
+    clearDropIndicator();
+    row.classList.add(`drop-${position}`);
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+  };
+
+  const onDragLeave = (event: DragEvent): void => {
+    const target = event.target as HTMLElement;
+    const row = target.closest<HTMLElement>('[data-drop-target]');
+    if (row && !row.contains(event.relatedTarget as Node | null)) {
+      row.classList.remove('drop-before', 'drop-inside', 'drop-after');
+    }
+  };
+
+  const onDrop = (event: DragEvent): void => {
+    if (event.dataTransfer?.types.includes('Files') || !draggingNodeId) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    const row = target.closest<HTMLElement>('[data-drop-target]');
+    const targetId = row?.dataset.dropTarget;
+    const position = row ? getDropPosition(event, row) : null;
+    if (!row || !targetId || !position || !workspace.contains(row) || !workflow.canMoveNode(draggingNodeId, targetId, position)) {
+      clearDropIndicator();
+      return;
+    }
+
+    event.preventDefault();
+    const movedNodeId = draggingNodeId;
+    workflow.moveNode(movedNodeId, targetId, position);
+    clearDropIndicator();
+    render();
+    focusNode(movedNodeId);
+  };
+
+  const onDragEnd = (): void => {
+    const dragged = draggingNodeId
+      ? Array.from(workspace.querySelectorAll<HTMLElement>('[data-drag-node]'))
+        .find((candidate) => candidate.dataset.dragNode === draggingNodeId)
+      : null;
+    dragged?.classList.remove('is-dragging');
+    dragged?.setAttribute('aria-grabbed', 'false');
+    draggingNodeId = null;
+    clearDropIndicator();
+  };
+
   const onKeyDown = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement;
     const editor = target.closest<HTMLInputElement>('[data-node-editor]');
@@ -257,6 +351,11 @@ export function bindWorkspaceInteractions(
   workspace.addEventListener('dblclick', onDoubleClick);
   workspace.addEventListener('contextmenu', onContextMenu);
   workspace.addEventListener('keydown', onKeyDown);
+  workspace.addEventListener('dragstart', onDragStart);
+  workspace.addEventListener('dragover', onDragOver);
+  workspace.addEventListener('dragleave', onDragLeave);
+  workspace.addEventListener('drop', onDrop);
+  workspace.addEventListener('dragend', onDragEnd);
   document.addEventListener('pointerdown', onDocumentPointerDown);
 
   return () => {
@@ -265,6 +364,11 @@ export function bindWorkspaceInteractions(
     workspace.removeEventListener('dblclick', onDoubleClick);
     workspace.removeEventListener('contextmenu', onContextMenu);
     workspace.removeEventListener('keydown', onKeyDown);
+    workspace.removeEventListener('dragstart', onDragStart);
+    workspace.removeEventListener('dragover', onDragOver);
+    workspace.removeEventListener('dragleave', onDragLeave);
+    workspace.removeEventListener('drop', onDrop);
+    workspace.removeEventListener('dragend', onDragEnd);
     document.removeEventListener('pointerdown', onDocumentPointerDown);
   };
 }

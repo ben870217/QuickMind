@@ -273,4 +273,75 @@ describe('DocumentWorkflow', () => {
     workflow.navigate('down');
     expect(workflow.getState().selectionId).toBe('root-id');
   });
+
+  it('moves nodes before, after, and inside a target while retaining moved selection', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'first-id', 'second-id', 'third-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+      now: () => '2026-08-14T00:01:00.000Z',
+    });
+    const initial = await workflow.start();
+
+    workflow.addChild(initial.document.root.id);
+    workflow.commitTitle('第一個');
+    workflow.addSibling('first-id');
+    workflow.commitTitle('第二個');
+    workflow.addSibling('second-id');
+    workflow.commitTitle('第三個');
+
+    workflow.moveNode('first-id', 'second-id', 'after');
+    expect(workflow.getState().document.root.children.map((node) => node.id)).toEqual([
+      'second-id',
+      'first-id',
+      'third-id',
+    ]);
+    expect(workflow.getState().selectionId).toBe('first-id');
+
+    workflow.moveNode('third-id', 'second-id', 'before');
+    expect(workflow.getState().document.root.children.map((node) => node.id)).toEqual([
+      'third-id',
+      'second-id',
+      'first-id',
+    ]);
+
+    workflow.moveNode('first-id', 'second-id', 'inside');
+    const state = workflow.getState();
+    expect(state.document.root.children.map((node) => node.id)).toEqual(['third-id', 'second-id']);
+    expect(state.document.root.children[1]?.children.map((node) => node.id)).toEqual(['first-id']);
+    expect(state.selectionId).toBe('first-id');
+  });
+
+  it('rejects moving the root or moving a node into its own descendant', async () => {
+    const store = new MemoryWorkspaceStore();
+    const ids = ['document-id', 'root-id', 'parent-id', 'child-id'];
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: () => ids.shift() ?? 'unused',
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      createId: () => ids.shift() ?? 'unused',
+    });
+    const initial = await workflow.start();
+
+    workflow.addChild(initial.document.root.id);
+    workflow.commitTitle('父節點');
+    workflow.addChild('parent-id');
+    workflow.commitTitle('子節點');
+
+    expect(workflow.canMoveNode('root-id', 'parent-id')).toBe(false);
+    expect(workflow.canMoveNode('parent-id', 'child-id')).toBe(false);
+    expect(workflow.canMoveNode('parent-id', 'root-id', 'before')).toBe(false);
+    expect(workflow.canMoveNode('parent-id', 'root-id', 'after')).toBe(false);
+    expect(workflow.canMoveNode('parent-id', 'root-id', 'inside')).toBe(true);
+    workflow.moveNode('parent-id', 'child-id', 'inside');
+
+    const state = workflow.getState();
+    expect(state.document.root.children[0]?.id).toBe('parent-id');
+    expect(state.document.root.children[0]?.children[0]?.id).toBe('child-id');
+  });
 });

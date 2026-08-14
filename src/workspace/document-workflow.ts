@@ -13,6 +13,7 @@ import type { WorkspaceStore } from '../persistence/workspace-store';
 export type PersistenceStatus = 'saving' | 'saved' | 'error';
 export type ConnectivityStatus = 'online' | 'offline';
 export type NavigationDirection = 'up' | 'down' | 'left' | 'right';
+export type MovePosition = 'before' | 'inside' | 'after';
 
 export interface WorkspaceState {
   document: QuickMindDocument;
@@ -261,6 +262,59 @@ export class DocumentWorkflow {
 
     node.isCollapsed = !node.isCollapsed;
     state.selectionId = node.id;
+    this.markChanged();
+
+    return this.getState();
+  }
+
+  canMoveNode(nodeId: string, targetId: string, position: MovePosition = 'inside'): boolean {
+    const state = this.requireState();
+    const sourceLocation = findNodeLocation(state.document.root, nodeId);
+    const targetLocation = findNodeLocation(state.document.root, targetId);
+
+    if (!sourceLocation?.parent || !targetLocation || nodeId === targetId) {
+      return false;
+    }
+
+    if (position !== 'inside' && !targetLocation.parent) {
+      return false;
+    }
+
+    return !findNode(sourceLocation.node, targetId);
+  }
+
+  moveNode(nodeId: string, targetId: string, position: MovePosition): WorkspaceState {
+    const state = this.requireState();
+    if (!this.canMoveNode(nodeId, targetId, position)) {
+      return this.getState();
+    }
+
+    const sourceLocation = findNodeLocation(state.document.root, nodeId);
+    if (!sourceLocation?.parent) {
+      return this.getState();
+    }
+
+    const source = sourceLocation.node;
+    sourceLocation.parent.children.splice(sourceLocation.index, 1);
+
+    if (position === 'inside') {
+      const target = findNode(state.document.root, targetId);
+      if (!target) {
+        throw new Error(`Node ${targetId} does not exist`);
+      }
+      target.children.push(source);
+    } else {
+      const targetLocation = findNodeLocation(state.document.root, targetId);
+      if (!targetLocation?.parent) {
+        throw new Error(`Node ${targetId} cannot be a sibling target`);
+      }
+
+      const insertionIndex = targetLocation.index + (position === 'after' ? 1 : 0);
+      targetLocation.parent.children.splice(insertionIndex, 0, source);
+    }
+
+    state.selectionId = source.id;
+    state.editing = null;
     this.markChanged();
 
     return this.getState();

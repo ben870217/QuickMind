@@ -68,13 +68,13 @@ h1 {
 
 .workspace {
   flex: 1;
-  display: grid;
-  place-items: center;
+  overflow: auto;
   padding: 2rem;
 }
 
 .document-workspace {
-  width: min(52rem, 100%);
+  width: max-content;
+  min-width: 100%;
 }
 
 .workspace-toolbar {
@@ -94,12 +94,13 @@ h1 {
 }
 
 .root-node {
+  min-width: 58rem;
   padding: 3rem;
   border: 1px solid #cbb8ab;
   border-radius: 1.25rem;
   background: #fffaf4;
   box-shadow: 0 1.5rem 4rem rgba(85, 71, 62, 0.1);
-  text-align: center;
+  text-align: left;
 }
 
 .mindmap-tree,
@@ -111,8 +112,14 @@ h1 {
   list-style: none;
 }
 
+.mindmap-tree {
+  display: flex;
+  align-items: center;
+  min-height: 4rem;
+}
+
 .mindmap-children {
-  margin: 0.75rem 0 0 1.5rem;
+  margin: 0 0 0 2.5rem;
   padding-left: 1rem;
   border-left: 2px solid #dfd2c5;
   text-align: left;
@@ -120,6 +127,15 @@ h1 {
 
 .mindmap-node {
   min-width: 0;
+}
+
+.mindmap-tree > .mindmap-node,
+.mindmap-node > .mindmap-children {
+  flex: 0 0 auto;
+}
+
+.mindmap-node > .mindmap-children {
+  min-width: 18rem;
 }
 
 .node-row {
@@ -173,6 +189,50 @@ h1 {
 
 .node-card {
   cursor: pointer;
+}
+
+.node-card[draggable="true"] {
+  cursor: grab;
+}
+
+.node-card.is-dragging {
+  opacity: 0.45;
+}
+
+.node-row {
+  position: relative;
+}
+
+.node-row.drop-before::before,
+.node-row.drop-after::after,
+.node-row.drop-inside::before {
+  position: absolute;
+  z-index: 1;
+  content: '';
+  pointer-events: none;
+}
+
+.node-row.drop-before::before,
+.node-row.drop-after::after {
+  right: 0;
+  left: 0;
+  height: 3px;
+  border-radius: 999px;
+  background: #6f9580;
+}
+
+.node-row.drop-before::before {
+  top: -0.45rem;
+}
+
+.node-row.drop-after::after {
+  bottom: -0.45rem;
+}
+
+.node-row.drop-inside::before {
+  inset: -0.3rem;
+  border: 2px solid #6f9580;
+  border-radius: 0.9rem;
 }
 
 .node-card:hover,
