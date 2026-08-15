@@ -12,6 +12,7 @@ import {
   QuickMindFormatError,
   serializeQuickMindDocument,
 } from '../domain/quickmind-format';
+import { createDrawioArtifact } from '../export/drawio';
 import { createMermaidArtifact } from '../export/mermaid';
 import { renderWorkspaceConnections } from './workspace';
 import type { DocumentWorkflow, MovePosition } from '../workspace/document-workflow';
@@ -267,6 +268,8 @@ export function bindWorkspaceInteractions(
         exportDocument();
       } else if (fileAction.dataset.fileAction === 'export-mermaid') {
         exportMermaid();
+      } else if (fileAction.dataset.fileAction === 'export-drawio') {
+        exportDrawio();
       } else if (fileAction.dataset.fileAction === 'clear') {
         const state = workflow.getState();
         const confirmation = state.hasUnexportedChanges
@@ -495,20 +498,43 @@ export function bindWorkspaceInteractions(
     }
   };
 
-  const exportMermaid = (): void => {
+  const exportTextArtifact = (options: {
+    createArtifact: () => { filename: string; mimeType: string; source: string };
+    successMessage: string;
+    failureMessage: string;
+    failureDetail: string;
+  }): void => {
     if (!prepareExport()) {
       return;
     }
 
     try {
-      const artifact = createMermaidArtifact(workflow.getState().document);
+      const artifact = options.createArtifact();
       downloadTextFile(artifact.source, artifact.filename, artifact.mimeType);
       render();
-      showFileMessage('已匯出 Mermaid 原始碼。');
+      showFileMessage(options.successMessage);
     } catch (error) {
-      const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'mermaid-export-failed';
-      showFileMessage('Mermaid 匯出失敗，文件內容仍保留在目前工作區。', detail);
+      const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : options.failureDetail;
+      showFileMessage(options.failureMessage, detail);
     }
+  };
+
+  const exportMermaid = (): void => {
+    exportTextArtifact({
+      createArtifact: () => createMermaidArtifact(workflow.getState().document),
+      successMessage: '已匯出 Mermaid 原始碼。',
+      failureMessage: 'Mermaid 匯出失敗，文件內容仍保留在目前工作區。',
+      failureDetail: 'mermaid-export-failed',
+    });
+  };
+
+  const exportDrawio = (): void => {
+    exportTextArtifact({
+      createArtifact: () => createDrawioArtifact(workflow.getState().document),
+      successMessage: '已匯出 draw.io 檔案。',
+      failureMessage: 'draw.io 匯出失敗，文件內容仍保留在目前工作區。',
+      failureDetail: 'drawio-export-failed',
+    });
   };
 
   const importFile = async (file: File): Promise<void> => {
