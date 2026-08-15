@@ -147,12 +147,13 @@ export function createExportLayout(document: QuickMindDocument): ExportLayout {
   }
 
   const nodes = internalNodes.map(({ childIndexes: _childIndexes, subtreeHeight: _subtreeHeight, ...node }) => node);
+  const nodeByExportId = new Map(nodes.map((node) => [node.exportId, node]));
   const edges = nodes.flatMap((target) => {
     if (!target.parentExportId) {
       return [];
     }
 
-    const source = nodes.find((candidate) => candidate.exportId === target.parentExportId);
+    const source = nodeByExportId.get(target.parentExportId);
     if (!source) {
       throw new Error('Export layout edge references a missing node');
     }

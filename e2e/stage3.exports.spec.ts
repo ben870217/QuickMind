@@ -15,6 +15,11 @@ async function createSmallMap(page: Page): Promise<void> {
 }
 
 async function readDownload(download: Download): Promise<string> {
+  const buffer = await readDownloadBuffer(download);
+  return buffer.toString('utf8');
+}
+
+async function readDownloadBuffer(download: Download): Promise<Buffer> {
   const stream = await download.createReadStream();
   if (!stream) {
     throw new Error('The browser did not expose the downloaded file');
@@ -23,7 +28,7 @@ async function readDownload(download: Download): Promise<string> {
   for await (const chunk of stream) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
 }
 
 test('exports complete Mermaid source while preserving native export state', async ({ page }) => {
@@ -83,5 +88,28 @@ test('exports a complete editable draw.io document with stable synthetic ids', a
   expect(source).toContain('edge="1"');
   expect(source).toContain('收合後仍要匯出');
   await expect(page.locator('[data-file-message]')).toContainText('draw.io');
+  await expect(page.locator('[data-status-badge="export"]')).toHaveText('尚未匯出');
+});
+
+test('exports a complete three-times PNG without using the current viewport', async ({ page }) => {
+  await page.goto('/');
+  await createSmallMap(page);
+
+  const canvas = page.locator('[data-canvas]');
+  await canvas.focus();
+  await page.keyboard.press('+');
+  await canvas.hover();
+  await page.mouse.wheel(0, 500);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: '匯出 PNG' }).click();
+  const download = await downloadPromise;
+
+  expect(download.suggestedFilename()).toBe('我的心智圖.png');
+  const png = await readDownloadBuffer(download);
+  expect([...png.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+  expect(png.readUInt32BE(16)).toBe(3024);
+  expect(png.readUInt32BE(20)).toBe(336);
+  await expect(page.locator('[data-file-message]')).toContainText('PNG');
   await expect(page.locator('[data-status-badge="export"]')).toHaveText('尚未匯出');
 });

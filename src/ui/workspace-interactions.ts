@@ -14,6 +14,7 @@ import {
 } from '../domain/quickmind-format';
 import { createDrawioArtifact } from '../export/drawio';
 import { createMermaidArtifact } from '../export/mermaid';
+import { createPngArtifact, PngExportError } from '../export/png';
 import { renderWorkspaceConnections } from './workspace';
 import type { DocumentWorkflow, MovePosition } from '../workspace/document-workflow';
 
@@ -270,6 +271,8 @@ export function bindWorkspaceInteractions(
         exportMermaid();
       } else if (fileAction.dataset.fileAction === 'export-drawio') {
         exportDrawio();
+      } else if (fileAction.dataset.fileAction === 'export-png') {
+        exportPng();
       } else if (fileAction.dataset.fileAction === 'clear') {
         const state = workflow.getState();
         const confirmation = state.hasUnexportedChanges
@@ -437,12 +440,13 @@ export function bindWorkspaceInteractions(
     return `${error.code} at ${error.path}`;
   };
 
-  const downloadTextFile = (source: string, filename: string, mimeType = 'application/json;charset=utf-8'): void => {
+  const downloadArtifact = (data: string | Blob, filename: string, mimeType: string): void => {
     if (typeof URL.createObjectURL !== 'function') {
       throw new Error('download-unsupported');
     }
 
-    const url = URL.createObjectURL(new Blob([source], { type: mimeType }));
+    const blob = typeof data === 'string' ? new Blob([data], { type: mimeType }) : data;
+    const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = filename;
@@ -451,6 +455,10 @@ export function bindWorkspaceInteractions(
     } finally {
       URL.revokeObjectURL(url);
     }
+  };
+
+  const downloadTextFile = (source: string, filename: string, mimeType = 'application/json;charset=utf-8'): void => {
+    downloadArtifact(source, filename, mimeType);
   };
 
   const prepareExport = (): boolean => {
@@ -535,6 +543,26 @@ export function bindWorkspaceInteractions(
       failureMessage: 'draw.io 匯出失敗，文件內容仍保留在目前工作區。',
       failureDetail: 'drawio-export-failed',
     });
+  };
+
+  const exportPng = (): void => {
+    if (!prepareExport()) {
+      return;
+    }
+
+    const documentSnapshot = workflow.getState().document;
+    void createPngArtifact(documentSnapshot)
+      .then((artifact) => {
+        downloadArtifact(artifact.data, artifact.filename, artifact.mimeType);
+        render();
+        showFileMessage('已匯出 PNG 圖片。');
+      })
+      .catch((error: unknown) => {
+        const detail = error instanceof QuickMindFormatError
+          ? describeFormatError(error)
+          : error instanceof PngExportError ? error.code : 'png-export-failed';
+        showFileMessage('PNG 匯出失敗，文件內容仍保留在目前工作區。', detail);
+      });
   };
 
   const importFile = async (file: File): Promise<void> => {
