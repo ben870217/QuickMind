@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CURRENT_SCHEMA_VERSION } from './document';
 import {
   createQuickMindFilename,
+  createExternalFilename,
   MAX_QUICKMIND_NODE_COUNT,
   parseQuickMindDocument,
   QuickMindFormatError,
@@ -125,5 +126,7 @@ describe('QuickMind native format', () => {
     expect(createQuickMindFilename('CON')).toBe('_CON.quickmind');
     expect(createQuickMindFilename('主題.QUICKMIND')).toBe('主題.quickmind');
     expect(createQuickMindFilename('...')).toBe('未命名心智圖.quickmind');
+    expect(createExternalFilename('  我的/心智圖  ', 'mmd')).toBe('我的_心智圖.mmd');
+    expect(createExternalFilename('CON', 'drawio')).toBe('_CON.drawio');
   });
 });

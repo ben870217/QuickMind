@@ -3,6 +3,7 @@ import {
   findNode,
   findNodeLocation,
   MAX_NODE_TITLE_LENGTH,
+  normalizeNodeTitle,
   takeUserVisibleCharacters,
 } from '../domain/document';
 import {
@@ -11,6 +12,7 @@ import {
   QuickMindFormatError,
   serializeQuickMindDocument,
 } from '../domain/quickmind-format';
+import { createMermaidArtifact } from '../export/mermaid';
 import { renderWorkspaceConnections } from './workspace';
 import type { DocumentWorkflow, MovePosition } from '../workspace/document-workflow';
 
@@ -263,6 +265,8 @@ export function bindWorkspaceInteractions(
         workspace.querySelector<HTMLInputElement>('[data-native-file-input]')?.click();
       } else if (fileAction.dataset.fileAction === 'export') {
         exportDocument();
+      } else if (fileAction.dataset.fileAction === 'export-mermaid') {
+        exportMermaid();
       } else if (fileAction.dataset.fileAction === 'clear') {
         const state = workflow.getState();
         const confirmation = state.hasUnexportedChanges
@@ -430,16 +434,51 @@ export function bindWorkspaceInteractions(
     return `${error.code} at ${error.path}`;
   };
 
-  const downloadTextFile = (source: string, filename: string): void => {
-    const url = URL.createObjectURL(new Blob([source], { type: 'application/json;charset=utf-8' }));
+  const downloadTextFile = (source: string, filename: string, mimeType = 'application/json;charset=utf-8'): void => {
+    if (typeof URL.createObjectURL !== 'function') {
+      throw new Error('download-unsupported');
+    }
+
+    const url = URL.createObjectURL(new Blob([source], { type: mimeType }));
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = filename;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    try {
+      anchor.click();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const prepareExport = (): boolean => {
+    const editing = workflow.getState().editing;
+    if (!editing) {
+      return true;
+    }
+
+    const editor = workspace.querySelector<HTMLInputElement>('[data-node-editor]');
+    const normalized = editor ? normalizeNodeTitle(editor.value) : '';
+    if (!editor || editor.dataset.nodeId !== editing.nodeId || !normalized || countUserVisibleCharacters(normalized) > MAX_NODE_TITLE_LENGTH) {
+      showFileMessage('匯出已取消，請先完成節點標題。', 'invalid-node-title');
+      editor?.focus();
+      return false;
+    }
+
+    if (!workflow.commitTitle(editor.value)) {
+      showFileMessage('匯出已取消，請先完成節點標題。', 'invalid-node-title');
+      editor.focus();
+      return false;
+    }
+
+    render();
+    return true;
   };
 
   const exportDocument = (): void => {
+    if (!prepareExport()) {
+      return;
+    }
+
     try {
       const state = workflow.getState();
       const rescue = state.persistence === 'error';
@@ -453,6 +492,22 @@ export function bindWorkspaceInteractions(
     } catch (error) {
       const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'export-failed';
       showFileMessage('匯出失敗，文件內容仍保留在目前工作區。', detail);
+    }
+  };
+
+  const exportMermaid = (): void => {
+    if (!prepareExport()) {
+      return;
+    }
+
+    try {
+      const artifact = createMermaidArtifact(workflow.getState().document);
+      downloadTextFile(artifact.source, artifact.filename, artifact.mimeType);
+      render();
+      showFileMessage('已匯出 Mermaid 原始碼。');
+    } catch (error) {
+      const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'mermaid-export-failed';
+      showFileMessage('Mermaid 匯出失敗，文件內容仍保留在目前工作區。', detail);
     }
   };
 
@@ -587,6 +642,10 @@ export function bindWorkspaceInteractions(
 
   const onFileInputChange = (event: Event): void => {
     const input = event.target as HTMLInputElement;
+    if (!input.matches('[data-native-file-input]')) {
+      return;
+    }
+
     const file = input.files?.[0];
     input.value = '';
     if (file) {
