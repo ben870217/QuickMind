@@ -147,3 +147,62 @@ test('exports a complete three-times PNG without using the current viewport', as
   await expect(page.locator('[data-file-message]')).toContainText('PNG');
   await expect(page.locator('[data-status-badge="export"]')).toHaveText('尚未匯出');
 });
+
+test('rejects PNG atomically when the canvas capability is unavailable', async ({ page }) => {
+  await page.goto('/');
+  await createSmallMap(page);
+  await page.evaluate(() => {
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    let failNext = true;
+    HTMLCanvasElement.prototype.getContext = function (...args) {
+      if (failNext) {
+        failNext = false;
+        return null;
+      }
+      return Reflect.apply(originalGetContext, this, args);
+    };
+  });
+
+  const failedDownload = page.waitForEvent('download', { timeout: 500 }).then(() => true).catch(() => false);
+  await page.getByRole('button', { name: '匯出 PNG' }).click();
+  expect(await failedDownload).toBe(false);
+  await expect(page.locator('[data-file-message]')).toContainText('PNG 匯出失敗');
+  await page.getByText('查看詳細資訊').click();
+  const retryButton = page.getByRole('button', { name: '重試匯出' });
+  await expect(retryButton).toBeVisible();
+
+  const retryDownload = page.waitForEvent('download');
+  await retryButton.click();
+  const download = await retryDownload;
+  expect(download.suggestedFilename()).toBe('我的心智圖.png');
+});
+
+test('rejects PNG atomically when canvas encoding returns no blob', async ({ page }) => {
+  await page.goto('/');
+  await createSmallMap(page);
+  await page.evaluate(() => {
+    const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+    let failNext = true;
+    HTMLCanvasElement.prototype.toBlob = function (...args) {
+      if (failNext) {
+        failNext = false;
+        args[0](null);
+        return;
+      }
+      return Reflect.apply(originalToBlob, this, args);
+    };
+  });
+
+  const failedDownload = page.waitForEvent('download', { timeout: 500 }).then(() => true).catch(() => false);
+  await page.getByRole('button', { name: '匯出 PNG' }).click();
+  expect(await failedDownload).toBe(false);
+  await expect(page.locator('[data-file-message]')).toContainText('PNG 匯出失敗');
+  await page.getByText('查看詳細資訊').click();
+  const retryButton = page.getByRole('button', { name: '重試匯出' });
+  await expect(retryButton).toBeVisible();
+
+  const retryDownload = page.waitForEvent('download');
+  await retryButton.click();
+  const download = await retryDownload;
+  expect(download.suggestedFilename()).toBe('我的心智圖.png');
+});

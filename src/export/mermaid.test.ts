@@ -61,4 +61,24 @@ describe('Mermaid external export', () => {
     expect(artifact.mimeType).toBe('text/plain;charset=utf-8');
     expect(artifact.source).toContain('mindmap');
   });
+
+  it('rejects XML-incompatible control characters before writing Mermaid source', () => {
+    const document = structuredClone(documentFixture);
+    document.root.text = '不能輸出的控制字元\u0001';
+
+    expect(() => createMermaidSource(document)).toThrow('invalid-control-character');
+  });
+
+  it('rejects an external source over the shared 10 MB document limit', () => {
+    const document = structuredClone(documentFixture);
+    const wideTitle = '👨‍💻'.repeat(100);
+    document.root.children = Array.from({ length: 9_999 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${(100 + index).toString(16).padStart(12, '0')}`,
+      text: wideTitle,
+      isCollapsed: false,
+      children: [],
+    }));
+
+    expect(() => createMermaidSource(document)).toThrow('file-size-limit');
+  });
 });

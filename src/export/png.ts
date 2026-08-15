@@ -141,7 +141,7 @@ function renderNode(node: ExportLayout['nodes'][number]): string {
 
   return `
   <rect data-export-node="${node.exportId}" x="${round(x)}" y="${round(y)}" width="${node.width}" height="${node.height}" rx="12" fill="${PNG_NODE_BACKGROUND}" stroke="${PNG_NODE_BORDER}"/>
-  <text x="${round(textX)}" y="${round(firstLineY)}" fill="${PNG_TEXT_COLOR}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" text-anchor="start" dominant-baseline="middle">${lines}</text>`;
+  <text x="${round(textX)}" y="${round(firstLineY)}" fill="${PNG_TEXT_COLOR}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" text-anchor="start" dominant-baseline="middle" xml:space="preserve">${lines}</text>`;
 }
 
 function loadSvgImage(url: string): Promise<HTMLImageElement> {

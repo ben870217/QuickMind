@@ -3,6 +3,7 @@ import {
   createExternalFilename,
   serializeQuickMindDocument,
 } from '../domain/quickmind-format';
+import { assertExternalExportTextIsXmlSafe } from './export-text';
 
 export interface MermaidArtifact {
   filename: string;
@@ -17,6 +18,7 @@ interface MermaidFrame {
 
 export function createMermaidSource(document: QuickMindDocument): string {
   serializeQuickMindDocument(document);
+  assertExternalExportTextIsXmlSafe(document);
 
   const lines = ['mindmap'];
   const pending: MermaidFrame[] = [{ node: document.root, depth: 1 }];
