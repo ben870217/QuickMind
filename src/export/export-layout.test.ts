@@ -5,6 +5,7 @@ import {
   EXPORT_NODE_WIDTH,
   createExportLayout,
 } from './export-layout';
+import { ExternalExportError } from './export-text';
 
 const documentFixture: QuickMindDocument = {
   meta: {
@@ -73,5 +74,25 @@ describe('complete external export layout', () => {
     expect(node?.lines.length).toBeGreaterThan(1);
     expect(node?.lines.join('')).toBe(longTitle);
     expect(node?.height).toBeGreaterThan(48);
+  });
+
+  it('rejects XML-incompatible control characters before creating any scene', () => {
+    const document = structuredClone(documentFixture);
+    document.root.text = '不能輸出的控制字元\u0001';
+
+    expect(() => createExportLayout(document)).toThrowError(ExternalExportError);
+    expect(() => createExportLayout(document)).toThrow('invalid-control-character');
+  });
+
+  it('rejects external output over the shared node limit', () => {
+    const document = structuredClone(documentFixture);
+    document.root.children = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${(100 + index).toString(16).padStart(12, '0')}`,
+      text: `節點${index}`,
+      isCollapsed: false,
+      children: [],
+    }));
+
+    expect(() => createExportLayout(document)).toThrow('node-limit');
   });
 });

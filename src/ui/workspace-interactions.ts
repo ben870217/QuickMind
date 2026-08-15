@@ -13,6 +13,7 @@ import {
   serializeQuickMindDocument,
 } from '../domain/quickmind-format';
 import { createDrawioArtifact } from '../export/drawio';
+import { ExternalExportError } from '../export/export-text';
 import { createMermaidArtifact } from '../export/mermaid';
 import { createPngArtifact, PngExportError } from '../export/png';
 import { renderWorkspaceConnections } from './workspace';
@@ -364,7 +365,7 @@ export function bindWorkspaceInteractions(
     }
   };
 
-  const showFileMessage = (message: string, detail?: string): void => {
+  const showFileMessage = (message: string, detail?: string, retry?: () => void): void => {
     const messageElement = workspace.querySelector<HTMLElement>('[data-file-message]');
     if (!messageElement) {
       return;
@@ -373,13 +374,24 @@ export function bindWorkspaceInteractions(
     messageElement.hidden = false;
     messageElement.dataset.error = detail ? 'true' : 'false';
     messageElement.replaceChildren(document.createTextNode(message));
-    if (detail) {
+    if (detail || retry) {
       const details = document.createElement('details');
       const summary = document.createElement('summary');
       summary.textContent = '查看詳細資訊';
-      const detailText = document.createElement('span');
-      detailText.textContent = detail;
-      details.append(summary, detailText);
+      details.append(summary);
+      if (detail) {
+        const detailText = document.createElement('span');
+        detailText.textContent = detail;
+        details.append(detailText);
+      }
+      if (retry) {
+        const retryButton = document.createElement('button');
+        retryButton.className = 'file-button file-message-retry';
+        retryButton.type = 'button';
+        retryButton.textContent = '重試匯出';
+        retryButton.addEventListener('click', retry);
+        details.append(retryButton);
+      }
       messageElement.append(details);
     }
   };
@@ -462,7 +474,8 @@ export function bindWorkspaceInteractions(
   };
 
   const prepareExport = (): boolean => {
-    const editing = workflow.getState().editing;
+    const stateBeforeEditing = workflow.getState();
+    const editing = stateBeforeEditing.editing;
     if (!editing) {
       return true;
     }
@@ -475,7 +488,7 @@ export function bindWorkspaceInteractions(
       return false;
     }
 
-    if (!workflow.commitTitle(editor.value)) {
+    if (!workflow.commitTitle(editor.value, { preservePersistenceError: stateBeforeEditing.persistence === 'error' })) {
       showFileMessage('匯出已取消，請先完成節點標題。', 'invalid-node-title');
       editor.focus();
       return false;
@@ -502,7 +515,7 @@ export function bindWorkspaceInteractions(
       showFileMessage(rescue ? '已匯出救援檔案；本機保存警告仍然存在。' : '已匯出 QuickMind 原生檔案。');
     } catch (error) {
       const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'export-failed';
-      showFileMessage('匯出失敗，文件內容仍保留在目前工作區。', detail);
+      showFileMessage('匯出失敗，文件內容仍保留在目前工作區。', detail, exportDocument);
     }
   };
 
@@ -511,6 +524,7 @@ export function bindWorkspaceInteractions(
     successMessage: string;
     failureMessage: string;
     failureDetail: string;
+    retry: () => void;
   }): void => {
     if (!prepareExport()) {
       return;
@@ -522,8 +536,10 @@ export function bindWorkspaceInteractions(
       render();
       showFileMessage(options.successMessage);
     } catch (error) {
-      const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : options.failureDetail;
-      showFileMessage(options.failureMessage, detail);
+      const detail = error instanceof QuickMindFormatError
+        ? describeFormatError(error)
+        : error instanceof ExternalExportError ? error.code : options.failureDetail;
+      showFileMessage(options.failureMessage, detail, options.retry);
     }
   };
 
@@ -533,6 +549,7 @@ export function bindWorkspaceInteractions(
       successMessage: '已匯出 Mermaid 原始碼。',
       failureMessage: 'Mermaid 匯出失敗，文件內容仍保留在目前工作區。',
       failureDetail: 'mermaid-export-failed',
+      retry: exportMermaid,
     });
   };
 
@@ -542,6 +559,7 @@ export function bindWorkspaceInteractions(
       successMessage: '已匯出 draw.io 檔案。',
       failureMessage: 'draw.io 匯出失敗，文件內容仍保留在目前工作區。',
       failureDetail: 'drawio-export-failed',
+      retry: exportDrawio,
     });
   };
 
@@ -560,8 +578,9 @@ export function bindWorkspaceInteractions(
       .catch((error: unknown) => {
         const detail = error instanceof QuickMindFormatError
           ? describeFormatError(error)
-          : error instanceof PngExportError ? error.code : 'png-export-failed';
-        showFileMessage('PNG 匯出失敗，文件內容仍保留在目前工作區。', detail);
+          : error instanceof ExternalExportError ? error.code
+            : error instanceof PngExportError ? error.code : 'png-export-failed';
+        showFileMessage('PNG 匯出失敗，文件內容仍保留在目前工作區。', detail, exportPng);
       });
   };
 

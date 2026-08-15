@@ -70,6 +70,7 @@ function escapeMermaidLabel(value: string): string {
     ':': '#58;',
     '%': '#37;',
     '`': '#96;',
+    '\\': '#92;',
     '\n': '#10;',
     '\r': '#13;',
   };

@@ -1,5 +1,6 @@
 import type { QuickMindDocument, QuickMindNode } from '../domain/document';
 import { serializeQuickMindDocument } from '../domain/quickmind-format';
+import { assertExternalExportTextIsXmlSafe } from './export-text';
 
 export const EXPORT_NODE_WIDTH = 288;
 export const EXPORT_HORIZONTAL_GAP = 40;
@@ -56,6 +57,7 @@ interface PlacementFrame {
 
 export function createExportLayout(document: QuickMindDocument): ExportLayout {
   serializeQuickMindDocument(document);
+  assertExternalExportTextIsXmlSafe(document);
 
   const internalNodes: LayoutNode[] = [];
   const pending: LayoutFrame[] = [{ node: document.root, parentIndex: null, depth: 0 }];
@@ -216,9 +218,5 @@ function estimateCharacterWidth(segment: string): number {
   if (/\s/u.test(segment)) {
     return segment === '\t' ? EXPORT_FONT_SIZE * 2 : EXPORT_FONT_SIZE / 2;
   }
-  if (/^[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7ff\uf900-\ufaff\u{1f000}-\u{1ffff}]$/u.test(segment)) {
-    return EXPORT_FONT_SIZE;
-  }
-
-  return EXPORT_FONT_SIZE / 2;
+  return EXPORT_FONT_SIZE;
 }

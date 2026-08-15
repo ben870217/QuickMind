@@ -49,6 +49,36 @@ test('exports complete Mermaid source while preserving native export state', asy
   await expect(page.locator('[data-file-message]')).toContainText('Mermaid');
 });
 
+test('offers a retry entry after an external export capability failure', async ({ page }) => {
+  await page.goto('/');
+  await createSmallMap(page);
+  await page.evaluate(() => {
+    const originalCreateObjectUrl = URL.createObjectURL.bind(URL);
+    let failNext = true;
+    URL.createObjectURL = (blob: Blob): string => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('blocked for test');
+      }
+      return originalCreateObjectUrl(blob);
+    };
+  });
+
+  const failedDownload = page.waitForEvent('download', { timeout: 500 }).then(() => true).catch(() => false);
+  await page.getByRole('button', { name: '匯出 Mermaid' }).click();
+  expect(await failedDownload).toBe(false);
+  await expect(page.locator('[data-file-message]')).toContainText('Mermaid 匯出失敗');
+  await page.getByText('查看詳細資訊').click();
+  const retryButton = page.getByRole('button', { name: '重試匯出' });
+  await expect(retryButton).toBeVisible();
+
+  const retryDownload = page.waitForEvent('download');
+  await retryButton.click();
+  const download = await retryDownload;
+  expect(download.suggestedFilename()).toBe('我的心智圖.mmd');
+  await expect(page.locator('[data-file-message]')).toContainText('已匯出 Mermaid 原始碼');
+});
+
 test('commits a valid title before external export and cancels invalid editing', async ({ page }) => {
   await page.goto('/');
   await createSmallMap(page);
@@ -87,6 +117,10 @@ test('exports a complete editable draw.io document with stable synthetic ids', a
   expect(source).toContain('vertex="1"');
   expect(source).toContain('edge="1"');
   expect(source).toContain('收合後仍要匯出');
+  const parseError = await page.evaluate((xml) => (
+    new DOMParser().parseFromString(xml, 'application/xml').querySelector('parsererror')?.textContent ?? ''
+  ), source);
+  expect(parseError).toBe('');
   await expect(page.locator('[data-file-message]')).toContainText('draw.io');
   await expect(page.locator('[data-status-badge="export"]')).toHaveText('尚未匯出');
 });

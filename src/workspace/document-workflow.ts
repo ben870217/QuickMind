@@ -59,6 +59,10 @@ export interface DocumentWorkflowOptions {
   saveRetryDelaysMs?: number[];
 }
 
+export interface CommitTitleOptions {
+  preservePersistenceError?: boolean;
+}
+
 interface HistoryEntry {
   before: QuickMindDocument;
   after: QuickMindDocument;
@@ -386,9 +390,10 @@ export class DocumentWorkflow {
     return this.getState();
   }
 
-  commitTitle(value: string): boolean {
+  commitTitle(value: string, options: CommitTitleOptions = {}): boolean {
     const state = this.requireState();
     const editing = state.editing;
+    const preservePersistenceError = options.preservePersistenceError && state.persistence === 'error';
 
     if (!editing) {
       return false;
@@ -436,7 +441,11 @@ export class DocumentWorkflow {
     this.pendingEditBefore = null;
 
     if (changed) {
-      this.markChanged(beforeDocument, editing.isNew);
+      this.markChanged(beforeDocument, editing.isNew && !preservePersistenceError);
+      if (preservePersistenceError) {
+        this.clearSaveTimer();
+        state.persistence = 'error';
+      }
     }
 
     return true;

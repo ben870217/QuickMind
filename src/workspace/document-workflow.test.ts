@@ -664,6 +664,33 @@ describe('DocumentWorkflow', () => {
     expect(store.document).toEqual(state.document);
   });
 
+  it('can commit an export title without clearing a save failure warning', async () => {
+    const store = new FailingWorkspaceStore();
+    store.failuresRemaining = 4;
+    const workflow = new DocumentWorkflow(store, {
+      createDocument: () => createQuickMindDocument({
+        createId: (() => {
+          const ids = ['document-id', 'root-id'];
+          return () => ids.shift() ?? 'unused';
+        })(),
+        now: () => '2026-08-14T00:00:00.000Z',
+      }),
+      saveRetryDelaysMs: [0, 0, 0],
+    });
+    await workflow.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(workflow.getState().persistence).toBe('error');
+
+    workflow.beginEditing('root-id');
+    expect(workflow.commitTitle('救援標題', { preservePersistenceError: true })).toBe(true);
+
+    expect(workflow.getState().persistence).toBe('error');
+    expect(workflow.getState().document.root.text).toBe('救援標題');
+    expect(workflow.getState().hasUnexportedChanges).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(workflow.getState().persistence).toBe('error');
+  });
+
   it('clears the local copy into a new document and resets history', async () => {
     const store = new MemoryWorkspaceStore();
     const ids = ['document-id', 'root-id', 'replacement-document-id', 'replacement-root-id'];

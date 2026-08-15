@@ -50,6 +50,7 @@ describe('draw.io external export', () => {
     expect(source).not.toContain(documentFixture.meta.id);
     expect(source).not.toContain(documentFixture.root.id);
     expect(source).not.toContain('compressed="true"');
+    expect(source.match(/<mxCell /g)).toHaveLength(7);
   });
 
   it('creates a safe draw.io filename and XML artifact', () => {

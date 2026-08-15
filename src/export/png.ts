@@ -1,5 +1,6 @@
 import type { QuickMindDocument } from '../domain/document';
 import { createExternalFilename } from '../domain/quickmind-format';
+import { ExternalExportError } from './export-text';
 import {
   EXPORT_LINE_HEIGHT,
   EXPORT_MARGIN,
@@ -7,6 +8,7 @@ import {
   createExportLayout,
   type ExportLayout,
 } from './export-layout';
+import { escapeXml } from './xml';
 
 export const PNG_PIXEL_RATIO = 3;
 const PNG_BACKGROUND = '#f4ede6';
@@ -102,7 +104,7 @@ export async function createPngArtifact(document: QuickMindDocument): Promise<Pn
       data,
     };
   } catch (error) {
-    if (error instanceof PngExportError) {
+    if (error instanceof PngExportError || error instanceof ExternalExportError) {
       throw error;
     }
     throw new PngExportError('svg-render-failed', error instanceof Error ? error.message : 'image-load');
@@ -170,13 +172,4 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 
 function round(value: number): string {
   return (Math.round(value * 100) / 100).toString();
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;');
 }
