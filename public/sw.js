@@ -1,4 +1,4 @@
-const CACHE_NAME = 'quickmind-shell-v1';
+const CACHE_NAME = 'quickmind-shell-v2';
 const BASE_URL = new URL('./', self.registration.scope);
 const INDEX_URL = new URL('index.html', BASE_URL).toString();
 const OFFLINE_URL = new URL('offline.html', BASE_URL).toString();

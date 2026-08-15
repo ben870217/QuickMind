@@ -23,7 +23,11 @@ export function renderWorkspace(container: HTMLElement, state: WorkspaceState): 
     ? `操作已拒絕：目前 ${state.limitError.nodeCount.toLocaleString()} / ${state.limitError.maxNodes.toLocaleString()} 個節點、${state.limitError.byteLength.toLocaleString()} / ${state.limitError.maxBytes.toLocaleString()} bytes。`
     : '';
 
-  container.innerHTML = `
+  const currentCanvas = container.querySelector<HTMLElement>('[data-canvas]');
+  const fullscreenCanvas = typeof document !== 'undefined' && document.fullscreenElement === currentCanvas
+    ? currentCanvas
+    : null;
+  const workspaceMarkup = `
     <section class="document-workspace" aria-labelledby="document-title">
       <div class="workspace-toolbar">
         <button class="history-button" type="button" data-history-action="undo" aria-label="復原（Ctrl／⌘+Z）" aria-keyshortcuts="Control+Z Meta+Z" title="復原（Ctrl／⌘+Z）"${state.canUndo ? '' : ' disabled'}>↶ 復原</button>
@@ -39,8 +43,10 @@ export function renderWorkspace(container: HTMLElement, state: WorkspaceState): 
       </div>
       <p class="file-message" data-file-message${limitMessage ? '' : ' hidden'}${importLocked ? ' data-error="true"' : ''} role="status">${limitMessage}</p>
       <section class="canvas-viewport" data-canvas tabindex="0" aria-label="心智圖畫布">
+        <button class="canvas-fullscreen-control" type="button" data-canvas-action="fullscreen" aria-label="進入全螢幕" title="進入全螢幕">⛶ 全螢幕</button>
         <div class="canvas-content" data-canvas-content style="transform: translate3d(${panX}px, ${panY}px, 0) scale(${zoom});">
-          <article class="root-node">
+          <article class="root-node" data-canvas-scene>
+            <svg class="canvas-connections" data-connection-layer aria-hidden="true" focusable="false"></svg>
             <p class="node-kicker">根節點</p>
             <ul class="mindmap-tree" role="tree">${renderNode(state.document.root, state, 1)}</ul>
             <p class="workspace-hint">目前文件已準備好，可以開始整理階層。</p>
@@ -49,6 +55,140 @@ export function renderWorkspace(container: HTMLElement, state: WorkspaceState): 
       </section>
     </section>
   `;
+
+  if (!fullscreenCanvas) {
+    container.innerHTML = workspaceMarkup;
+  } else {
+    const nextContainer = document.createElement('div');
+    nextContainer.innerHTML = workspaceMarkup;
+    const nextWorkspace = nextContainer.querySelector<HTMLElement>('.document-workspace');
+    const currentWorkspace = container.querySelector<HTMLElement>('.document-workspace');
+    const nextToolbar = nextWorkspace?.querySelector<HTMLElement>('.workspace-toolbar');
+    const nextMessage = nextWorkspace?.querySelector<HTMLElement>('[data-file-message]');
+    const nextCanvas = nextWorkspace?.querySelector<HTMLElement>('[data-canvas]');
+
+    currentWorkspace?.querySelector<HTMLElement>('.workspace-toolbar')?.replaceWith(nextToolbar ?? document.createElement('div'));
+    currentWorkspace?.querySelector<HTMLElement>('[data-file-message]')?.replaceWith(nextMessage ?? document.createElement('p'));
+    if (nextCanvas) {
+      fullscreenCanvas.replaceChildren(...Array.from(nextCanvas.childNodes));
+    }
+    currentWorkspace?.setAttribute('data-canvas-fullscreen', 'true');
+    const fullscreenButton = fullscreenCanvas.querySelector<HTMLButtonElement>('[data-canvas-action="fullscreen"]');
+    fullscreenButton?.setAttribute('aria-label', '退出全螢幕');
+    fullscreenButton?.setAttribute('title', '退出全螢幕');
+    if (fullscreenButton) {
+      fullscreenButton.textContent = '⛶ 退出全螢幕';
+    }
+  }
+
+  renderWorkspaceConnections(container, state);
+}
+
+export interface WorkspaceConnection {
+  parentId: string;
+  childId: string;
+  emphasized: boolean;
+}
+
+export function getVisibleWorkspaceConnections(
+  root: WorkspaceState['document']['root'],
+  selectionId: string | null,
+): WorkspaceConnection[] {
+  const connections: WorkspaceConnection[] = [];
+
+  const visit = (node: WorkspaceState['document']['root']): void => {
+    if (node.isCollapsed) {
+      return;
+    }
+
+    node.children.forEach((child) => {
+      connections.push({
+        parentId: node.id,
+        childId: child.id,
+        emphasized: selectionId === node.id || selectionId === child.id,
+      });
+      visit(child);
+    });
+  };
+
+  visit(root);
+  return connections;
+}
+
+export function renderWorkspaceConnections(container: HTMLElement, state: WorkspaceState): void {
+  const layer = container.querySelector<SVGSVGElement>('[data-connection-layer]');
+  const scene = container.querySelector<HTMLElement>('[data-canvas-scene]');
+  if (!layer || !scene) {
+    return;
+  }
+
+  const zoom = clamp(Number(container.dataset.canvasZoom ?? 1), 0.5, 2);
+  const sceneBounds = scene.getBoundingClientRect();
+  const connections = getVisibleWorkspaceConnections(state.document.root, state.selectionId);
+  const rowByNodeId = new Map<string, DOMRect>();
+
+  container.querySelectorAll<HTMLElement>('[data-node-id]').forEach((nodeElement) => {
+    const nodeId = nodeElement.dataset.nodeId;
+    const row = nodeElement.querySelector<HTMLElement>(':scope > .node-row');
+    if (nodeId && row) {
+      rowByNodeId.set(nodeId, row.getBoundingClientRect());
+    }
+  });
+
+  const toSceneCoordinates = (bounds: DOMRect): { left: number; right: number; centerY: number } => ({
+    left: (bounds.left - sceneBounds.left) / zoom,
+    right: (bounds.right - sceneBounds.left) / zoom,
+    centerY: (bounds.top - sceneBounds.top + bounds.height / 2) / zoom,
+  });
+
+  const pathForConnection = (parentId: string, childId: string): string | null => {
+    const parentBounds = rowByNodeId.get(parentId);
+    const childBounds = rowByNodeId.get(childId);
+    if (!parentBounds || !childBounds) {
+      return null;
+    }
+
+    const parent = toSceneCoordinates(parentBounds);
+    const child = toSceneCoordinates(childBounds);
+    const middleX = (parent.right + child.left) / 2;
+    return `M ${roundCoordinate(parent.right)} ${roundCoordinate(parent.centerY)} H ${roundCoordinate(middleX)} V ${roundCoordinate(child.centerY)} H ${roundCoordinate(child.left)}`;
+  };
+
+  const paths = connections.flatMap((connection) => {
+    const path = pathForConnection(connection.parentId, connection.childId);
+    if (!path) {
+      return [];
+    }
+
+    const emphasis = connection.emphasized ? 'true' : 'false';
+    const marker = connection.emphasized
+      ? 'quickmind-connection-arrow-emphasized'
+      : 'quickmind-connection-arrow';
+    return [`<path class="canvas-connection${connection.emphasized ? ' is-emphasized' : ''}" data-connection data-parent-node="${escapeHtml(connection.parentId)}" data-child-node="${escapeHtml(connection.childId)}" data-emphasized="${emphasis}" d="${path}" marker-end="url(#${marker})"></path>`];
+  });
+
+  const width = Math.max(scene.clientWidth, scene.scrollWidth, 1);
+  const height = Math.max(scene.clientHeight, scene.scrollHeight, 1);
+  layer.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  layer.setAttribute('width', String(width));
+  layer.setAttribute('height', String(height));
+  layer.style.width = `${width}px`;
+  layer.style.height = `${height}px`;
+  layer.innerHTML = `
+    <defs>
+      <marker id="quickmind-connection-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="#776158"></path>
+      </marker>
+      <marker id="quickmind-connection-arrow-emphasized" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="#5c7e6b"></path>
+      </marker>
+    </defs>
+    ${paths.join('')}
+  `;
+}
+
+function roundCoordinate(value: number): string {
+  return (Math.round(value * 100) / 100).toString();
 }
 
 function renderNode(node: WorkspaceState['document']['root'], state: WorkspaceState, level: number): string {
