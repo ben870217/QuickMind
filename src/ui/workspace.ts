@@ -39,6 +39,7 @@ export function renderWorkspace(container: HTMLElement, state: WorkspaceState): 
       </div>
       <p class="file-message" data-file-message${limitMessage ? '' : ' hidden'}${importLocked ? ' data-error="true"' : ''} role="status">${limitMessage}</p>
       <section class="canvas-viewport" data-canvas tabindex="0" aria-label="心智圖畫布">
+        <button class="canvas-fullscreen-control" type="button" data-canvas-action="fullscreen" aria-label="進入全螢幕" title="進入全螢幕">⛶ 全螢幕</button>
         <div class="canvas-content" data-canvas-content style="transform: translate3d(${panX}px, ${panY}px, 0) scale(${zoom});">
           <article class="root-node">
             <p class="node-kicker">根節點</p>

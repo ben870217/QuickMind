@@ -13,6 +13,48 @@ async function readDownload(download: Download): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+test('uses the remaining viewport space for the normal canvas', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/');
+  await expect(page.locator('[data-node-editor]')).toBeFocused();
+
+  const tallCanvas = await page.locator('[data-canvas]').boundingBox();
+  await page.setViewportSize({ width: 1280, height: 540 });
+  const shortCanvas = await page.locator('[data-canvas]').boundingBox();
+
+  expect(tallCanvas?.height ?? 0).toBeGreaterThan((shortCanvas?.height ?? 0) + 100);
+});
+
+test('offers native canvas fullscreen without changing the document view', async ({ page }) => {
+  await page.goto('/');
+  const canvas = page.locator('[data-canvas]');
+  const fullscreenButton = page.getByRole('button', { name: '進入全螢幕' });
+  await expect(fullscreenButton).toBeVisible();
+
+  await canvas.focus();
+  await page.keyboard.press('+');
+  await expect(page.locator('[data-workspace]')).toHaveAttribute('data-canvas-zoom', '1.1');
+  await fullscreenButton.click();
+
+  await page.waitForFunction(() => (
+    document.fullscreenElement !== null
+    || document.querySelector('[data-fullscreen-error]') !== null
+  ));
+
+  const enteredFullscreen = await page.evaluate(() => document.fullscreenElement !== null);
+  if (enteredFullscreen) {
+    await expect(page.locator('.workspace-toolbar')).toBeHidden();
+    await expect(page.getByRole('button', { name: '退出全螢幕' })).toBeVisible();
+    await expect(page.locator('[data-workspace]')).toHaveAttribute('data-canvas-zoom', '1.1');
+
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.fullscreenElement === null);
+    await expect(page.getByRole('button', { name: '進入全螢幕' })).toBeFocused();
+  } else {
+    await expect(page.locator('[data-fullscreen-error]')).toContainText('全螢幕');
+  }
+});
+
 test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'QuickMind' })).toBeVisible();

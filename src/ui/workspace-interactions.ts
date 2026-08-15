@@ -45,6 +45,28 @@ export function bindWorkspaceInteractions(
 
   const getCanvas = (): HTMLElement | null => workspace.querySelector<HTMLElement>('[data-canvas]');
 
+  const getFullscreenButton = (): HTMLButtonElement | null => (
+    workspace.querySelector<HTMLButtonElement>('[data-canvas-action="fullscreen"]')
+  );
+
+  const updateFullscreenControl = (): void => {
+    const button = getFullscreenButton();
+    const canvas = getCanvas();
+    if (!button || !canvas) {
+      return;
+    }
+
+    const isFullscreen = document.fullscreenElement === canvas;
+    const label = isFullscreen ? '退出全螢幕' : '進入全螢幕';
+    const documentWorkspace = workspace.querySelector<HTMLElement>('.document-workspace');
+    if (documentWorkspace) {
+      documentWorkspace.toggleAttribute('data-canvas-fullscreen', isFullscreen);
+    }
+    button.setAttribute('aria-label', label);
+    button.setAttribute('title', label);
+    button.textContent = isFullscreen ? '⛶ 退出全螢幕' : '⛶ 全螢幕';
+  };
+
   const getCanvasView = (): { zoom: number; panX: number; panY: number } => ({
     zoom: clamp(Number(workspace.dataset.canvasZoom ?? 1), minimumZoom, maximumZoom),
     panX: clamp(Number(workspace.dataset.canvasPanX ?? 0), -maximumPan, maximumPan),
@@ -199,6 +221,12 @@ export function bindWorkspaceInteractions(
 
   const onClick = (event: MouseEvent): void => {
     const target = event.target as HTMLElement;
+    const canvasAction = target.closest<HTMLButtonElement>('[data-canvas-action]');
+    if (canvasAction?.dataset.canvasAction === 'fullscreen') {
+      void toggleFullscreen();
+      return;
+    }
+
     const persistenceAction = target.closest<HTMLButtonElement>('[data-persistence-action]');
     if (persistenceAction?.dataset.persistenceAction === 'retry') {
       workflow.retrySave();
@@ -321,6 +349,46 @@ export function bindWorkspaceInteractions(
       detailText.textContent = detail;
       details.append(summary, detailText);
       messageElement.append(details);
+    }
+  };
+
+  const showFullscreenError = (detail: string): void => {
+    const messageElement = workspace.querySelector<HTMLElement>('[data-file-message]');
+    showFileMessage('無法進入全螢幕模式，仍維持一般畫布。', detail);
+    messageElement?.setAttribute('data-fullscreen-error', 'true');
+  };
+
+  const toggleFullscreen = async (): Promise<void> => {
+    const canvas = getCanvas();
+    if (!canvas) {
+      return;
+    }
+
+    if (document.fullscreenElement === canvas) {
+      if (typeof document.exitFullscreen !== 'function') {
+        showFullscreenError('fullscreen-exit-unsupported');
+        return;
+      }
+
+      try {
+        await document.exitFullscreen();
+      } catch {
+        showFullscreenError('fullscreen-exit-failed');
+      }
+      return;
+    }
+
+    if (!document.fullscreenEnabled || typeof canvas.requestFullscreen !== 'function') {
+      showFullscreenError('fullscreen-request-unsupported');
+      getFullscreenButton()?.focus();
+      return;
+    }
+
+    try {
+      await canvas.requestFullscreen();
+    } catch {
+      showFullscreenError('fullscreen-request-failed');
+      getFullscreenButton()?.focus();
     }
   };
 
@@ -538,6 +606,11 @@ export function bindWorkspaceInteractions(
     }
   };
 
+  const onFullscreenChange = (): void => {
+    updateFullscreenControl();
+    getFullscreenButton()?.focus();
+  };
+
   const onDragEnd = (): void => {
     const dragged = draggingNodeId
       ? Array.from(workspace.querySelectorAll<HTMLElement>('[data-drag-node]'))
@@ -572,6 +645,12 @@ export function bindWorkspaceInteractions(
         renderFocused(workflow.cancelEditing());
       }
 
+      return;
+    }
+
+    if (event.key === 'Escape' && document.fullscreenElement === getCanvas()) {
+      event.preventDefault();
+      void toggleFullscreen();
       return;
     }
 
@@ -652,6 +731,8 @@ export function bindWorkspaceInteractions(
   workspace.addEventListener('wheel', onWheel, { passive: false });
   workspace.addEventListener('change', onFileInputChange);
   document.addEventListener('pointerdown', onDocumentPointerDown);
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  updateFullscreenControl();
 
   return () => {
     closeContextMenu(false);
@@ -668,5 +749,6 @@ export function bindWorkspaceInteractions(
     workspace.removeEventListener('wheel', onWheel);
     workspace.removeEventListener('change', onFileInputChange);
     document.removeEventListener('pointerdown', onDocumentPointerDown);
+    document.removeEventListener('fullscreenchange', onFullscreenChange);
   };
 }
