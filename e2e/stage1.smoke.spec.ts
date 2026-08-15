@@ -55,6 +55,104 @@ test('offers native canvas fullscreen without changing the document view', async
   }
 });
 
+test('renders passive parent-child connectors for the visible hierarchy', async ({ page }) => {
+  await page.goto('/');
+  const rootEditor = page.locator('[data-node-editor]');
+  await rootEditor.fill('我的心智圖');
+  await rootEditor.press('Enter');
+
+  await page.keyboard.press('Tab');
+  await page.locator('[data-node-editor]').fill('第一個想法');
+  await page.locator('[data-node-editor]').press('Enter');
+  await page.keyboard.press('Enter');
+  await page.locator('[data-node-editor]').fill('第二個想法');
+  await page.locator('[data-node-editor]').press('Enter');
+
+  await page.getByRole('button', { name: '第一個想法', exact: true }).click();
+  await page.keyboard.press('Tab');
+  await page.locator('[data-node-editor]').fill('孫節點');
+  await page.locator('[data-node-editor]').press('Enter');
+
+  const connections = page.locator('[data-connection]');
+  const connectionLayer = page.locator('[data-connection-layer]');
+  await expect(connections).toHaveCount(3);
+  await expect(connectionLayer).toHaveAttribute('aria-hidden', 'true');
+  await expect(connectionLayer).toHaveCSS('pointer-events', 'none');
+  await expect(connections.first()).toHaveAttribute('d', /^M .* H .* V .* H .*/);
+
+  await page.getByRole('button', { name: '孫節點', exact: true }).click();
+  await expect(page.locator('[data-connection][data-emphasized="true"]')).toHaveCount(1);
+
+  const firstChildToggle = page.getByRole('button', { name: /^(收合|展開) 第一個想法$/ });
+  await firstChildToggle.click();
+  await expect(connections).toHaveCount(2);
+  await firstChildToggle.click();
+  await expect(connections).toHaveCount(3);
+
+  const firstChild = page.getByRole('button', { name: '第一個想法', exact: true });
+  const secondChild = page.getByRole('button', { name: '第二個想法', exact: true });
+  await secondChild.dragTo(firstChild, { targetPosition: { x: 20, y: 1 } });
+  await expect(connections).toHaveCount(3);
+  await expect(page.getByRole('button', { name: '第二個想法', exact: true })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('keeps the native title editor inside the hierarchy', async ({ page }) => {
+  await page.goto('/');
+  const rootEditor = page.locator('[data-node-editor]');
+  await rootEditor.fill('我的心智圖');
+  await rootEditor.press('Enter');
+  await page.keyboard.press('Tab');
+  await page.locator('[data-node-editor]').fill('第一個想法');
+  await page.locator('[data-node-editor]').press('Enter');
+
+  const child = page.getByRole('button', { name: '第一個想法', exact: true });
+  const connections = page.locator('[data-connection]');
+  await expect(connections).toHaveCount(1);
+  await child.dblclick();
+
+  const editor = page.locator('[data-node-editor]');
+  await expect(editor).toBeFocused();
+  await expect(editor.locator('xpath=ancestor::li[@data-node-id][1]').locator('[data-drag-node]')).toHaveCount(0);
+  await expect(connections).toHaveCount(1);
+
+  await editor.fill('中文標題');
+  await editor.press('Escape');
+  await expect(page.getByRole('button', { name: '第一個想法', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: '第一個想法', exact: true }).press('F2');
+  await expect(page.locator('[data-node-editor]')).toBeFocused();
+  await page.locator('[data-node-editor]').fill('界'.repeat(201));
+  await expect(page.locator('[data-node-editor]')).toHaveValue('界'.repeat(200));
+  await page.locator('[data-node-editor]').fill('新標題');
+  await page.locator('[data-node-editor]').press('Enter');
+  await expect(page.getByRole('button', { name: '新標題', exact: true })).toBeVisible();
+  await expect(connections).toHaveCount(1);
+});
+
+test('keeps native title editing inside canvas fullscreen', async ({ page }) => {
+  await page.goto('/');
+  const rootEditor = page.locator('[data-node-editor]');
+  await rootEditor.fill('我的心智圖');
+  await rootEditor.press('Enter');
+  await page.keyboard.press('Tab');
+  await page.locator('[data-node-editor]').fill('第一個想法');
+  await page.locator('[data-node-editor]').press('Enter');
+
+  const fullscreenButton = page.getByRole('button', { name: '進入全螢幕' });
+  await fullscreenButton.click();
+  await page.waitForFunction(() => document.fullscreenElement !== null);
+
+  await page.getByRole('button', { name: '第一個想法', exact: true }).click();
+  await page.keyboard.press('F2');
+  await page.locator('[data-node-editor]').fill('全螢幕編輯');
+  await page.locator('[data-node-editor]').press('Enter');
+  await expect(page.getByRole('button', { name: '全螢幕編輯', exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement !== null)).toBe(true);
+
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.fullscreenElement === null);
+});
+
 test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'QuickMind' })).toBeVisible();

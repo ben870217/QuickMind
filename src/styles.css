@@ -244,13 +244,37 @@ h1 {
 }
 
 .canvas-content {
+  position: relative;
   width: max-content;
   min-width: 100%;
   margin: auto;
   transform-origin: center center;
 }
 
+.canvas-connections {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.canvas-connection {
+  fill: none;
+  stroke: #a6897d;
+  stroke-width: 2;
+  opacity: 0.72;
+  vector-effect: non-scaling-stroke;
+}
+
+.canvas-connection.is-emphasized {
+  stroke: #6f9580;
+  stroke-width: 3.5;
+  opacity: 1;
+}
+
 .root-node {
+  position: relative;
   width: max-content;
   min-width: min(58rem, calc(100vw - 8rem));
   padding: 3rem;
@@ -259,6 +283,13 @@ h1 {
   background: #fffaf4;
   box-shadow: 0 1.5rem 4rem rgba(85, 71, 62, 0.1);
   text-align: left;
+}
+
+.root-node > .node-kicker,
+.root-node > .mindmap-tree,
+.root-node > .workspace-hint {
+  position: relative;
+  z-index: 1;
 }
 
 .mindmap-tree,
@@ -277,8 +308,7 @@ h1 {
   flex-direction: column;
   gap: 0.75rem;
   margin: 0;
-  padding-left: 1rem;
-  border-left: 2px solid #dfd2c5;
+  padding-left: 0;
   text-align: left;
 }
 

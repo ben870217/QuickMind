@@ -11,6 +11,7 @@ import {
   QuickMindFormatError,
   serializeQuickMindDocument,
 } from '../domain/quickmind-format';
+import { renderWorkspaceConnections } from './workspace';
 import type { DocumentWorkflow, MovePosition } from '../workspace/document-workflow';
 
 export function bindWorkspaceInteractions(
@@ -48,6 +49,18 @@ export function bindWorkspaceInteractions(
   const getFullscreenButton = (): HTMLButtonElement | null => (
     workspace.querySelector<HTMLButtonElement>('[data-canvas-action="fullscreen"]')
   );
+
+  const refreshConnections = (): void => {
+    renderWorkspaceConnections(workspace, workflow.getState());
+  };
+
+  const onViewportResize = (): void => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(refreshConnections);
+    } else {
+      refreshConnections();
+    }
+  };
 
   const updateFullscreenControl = (): void => {
     const button = getFullscreenButton();
@@ -98,6 +111,15 @@ export function bindWorkspaceInteractions(
 
   const renderFocused = (state: ReturnType<DocumentWorkflow['getState']>): void => {
     render();
+    focusNode(state.selectionId);
+  };
+
+  const selectNodeInPlace = (nodeId: string | null): void => {
+    const state = workflow.selectNode(nodeId);
+    workspace.querySelectorAll<HTMLElement>('[data-node-id]').forEach((node) => {
+      node.setAttribute('aria-selected', node.dataset.nodeId === state.selectionId ? 'true' : 'false');
+    });
+    refreshConnections();
     focusNode(state.selectionId);
   };
 
@@ -290,7 +312,7 @@ export function bindWorkspaceInteractions(
       return;
     }
 
-    renderFocused(workflow.selectNode(node.dataset.nodeId ?? null));
+    selectNodeInPlace(node.dataset.nodeId ?? null);
   };
 
   const onDoubleClick = (event: MouseEvent): void => {
@@ -609,6 +631,7 @@ export function bindWorkspaceInteractions(
   const onFullscreenChange = (): void => {
     updateFullscreenControl();
     getFullscreenButton()?.focus();
+    onViewportResize();
   };
 
   const onDragEnd = (): void => {
@@ -732,6 +755,7 @@ export function bindWorkspaceInteractions(
   workspace.addEventListener('change', onFileInputChange);
   document.addEventListener('pointerdown', onDocumentPointerDown);
   document.addEventListener('fullscreenchange', onFullscreenChange);
+  window.addEventListener('resize', onViewportResize);
   updateFullscreenControl();
 
   return () => {
@@ -750,5 +774,6 @@ export function bindWorkspaceInteractions(
     workspace.removeEventListener('change', onFileInputChange);
     document.removeEventListener('pointerdown', onDocumentPointerDown);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
+    window.removeEventListener('resize', onViewportResize);
   };
 }
