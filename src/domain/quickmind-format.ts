@@ -52,6 +52,7 @@ export class QuickMindFormatError extends Error {
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const UTC_ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const FILENAME_EXTENSION = '.quickmind';
+export type ExternalFilenameExtension = 'png' | 'mmd' | 'drawio';
 const KNOWN_FIELD_NAMES = new Set([
   'meta',
   'root',
@@ -155,6 +156,14 @@ export function validateQuickMindDocument(value: unknown): QuickMindDocument {
 }
 
 export function createQuickMindFilename(rootTitle: string): string {
+  return createSafeFilename(rootTitle, FILENAME_EXTENSION);
+}
+
+export function createExternalFilename(rootTitle: string, extension: ExternalFilenameExtension): string {
+  return createSafeFilename(rootTitle, `.${extension}`);
+}
+
+function createSafeFilename(rootTitle: string, extension: string): string {
   let base = rootTitle
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
     .trim()
@@ -173,7 +182,7 @@ export function createQuickMindFilename(rootTitle: string): string {
     base = `_${base}`;
   }
 
-  return `${base}${FILENAME_EXTENSION}`;
+  return `${base}${extension}`;
 }
 
 interface NodeValidationFrame {

@@ -184,6 +184,10 @@ h1 {
   font-size: 0.85rem;
 }
 
+.file-message-retry {
+  margin-left: 0.6rem;
+}
+
 .canvas-viewport {
   position: relative;
   flex: 1;

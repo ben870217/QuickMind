@@ -3,6 +3,7 @@ import {
   findNode,
   findNodeLocation,
   MAX_NODE_TITLE_LENGTH,
+  normalizeNodeTitle,
   takeUserVisibleCharacters,
 } from '../domain/document';
 import {
@@ -11,6 +12,10 @@ import {
   QuickMindFormatError,
   serializeQuickMindDocument,
 } from '../domain/quickmind-format';
+import { createDrawioArtifact } from '../export/drawio';
+import { ExternalExportError } from '../export/export-text';
+import { createMermaidArtifact } from '../export/mermaid';
+import { createPngArtifact, PngExportError } from '../export/png';
 import { renderWorkspaceConnections } from './workspace';
 import type { DocumentWorkflow, MovePosition } from '../workspace/document-workflow';
 
@@ -263,6 +268,12 @@ export function bindWorkspaceInteractions(
         workspace.querySelector<HTMLInputElement>('[data-native-file-input]')?.click();
       } else if (fileAction.dataset.fileAction === 'export') {
         exportDocument();
+      } else if (fileAction.dataset.fileAction === 'export-mermaid') {
+        exportMermaid();
+      } else if (fileAction.dataset.fileAction === 'export-drawio') {
+        exportDrawio();
+      } else if (fileAction.dataset.fileAction === 'export-png') {
+        exportPng();
       } else if (fileAction.dataset.fileAction === 'clear') {
         const state = workflow.getState();
         const confirmation = state.hasUnexportedChanges
@@ -354,7 +365,7 @@ export function bindWorkspaceInteractions(
     }
   };
 
-  const showFileMessage = (message: string, detail?: string): void => {
+  const showFileMessage = (message: string, detail?: string, retry?: () => void): void => {
     const messageElement = workspace.querySelector<HTMLElement>('[data-file-message]');
     if (!messageElement) {
       return;
@@ -363,13 +374,24 @@ export function bindWorkspaceInteractions(
     messageElement.hidden = false;
     messageElement.dataset.error = detail ? 'true' : 'false';
     messageElement.replaceChildren(document.createTextNode(message));
-    if (detail) {
+    if (detail || retry) {
       const details = document.createElement('details');
       const summary = document.createElement('summary');
       summary.textContent = '查看詳細資訊';
-      const detailText = document.createElement('span');
-      detailText.textContent = detail;
-      details.append(summary, detailText);
+      details.append(summary);
+      if (detail) {
+        const detailText = document.createElement('span');
+        detailText.textContent = detail;
+        details.append(detailText);
+      }
+      if (retry) {
+        const retryButton = document.createElement('button');
+        retryButton.className = 'file-button file-message-retry';
+        retryButton.type = 'button';
+        retryButton.textContent = '重試匯出';
+        retryButton.addEventListener('click', retry);
+        details.append(retryButton);
+      }
       messageElement.append(details);
     }
   };
@@ -430,16 +452,57 @@ export function bindWorkspaceInteractions(
     return `${error.code} at ${error.path}`;
   };
 
-  const downloadTextFile = (source: string, filename: string): void => {
-    const url = URL.createObjectURL(new Blob([source], { type: 'application/json;charset=utf-8' }));
+  const downloadArtifact = (data: string | Blob, filename: string, mimeType: string): void => {
+    if (typeof URL.createObjectURL !== 'function') {
+      throw new Error('download-unsupported');
+    }
+
+    const blob = typeof data === 'string' ? new Blob([data], { type: mimeType }) : data;
+    const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = filename;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    try {
+      anchor.click();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const downloadTextFile = (source: string, filename: string, mimeType = 'application/json;charset=utf-8'): void => {
+    downloadArtifact(source, filename, mimeType);
+  };
+
+  const prepareExport = (): boolean => {
+    const stateBeforeEditing = workflow.getState();
+    const editing = stateBeforeEditing.editing;
+    if (!editing) {
+      return true;
+    }
+
+    const editor = workspace.querySelector<HTMLInputElement>('[data-node-editor]');
+    const normalized = editor ? normalizeNodeTitle(editor.value) : '';
+    if (!editor || editor.dataset.nodeId !== editing.nodeId || !normalized || countUserVisibleCharacters(normalized) > MAX_NODE_TITLE_LENGTH) {
+      showFileMessage('匯出已取消，請先完成節點標題。', 'invalid-node-title');
+      editor?.focus();
+      return false;
+    }
+
+    if (!workflow.commitTitle(editor.value, { preservePersistenceError: stateBeforeEditing.persistence === 'error' })) {
+      showFileMessage('匯出已取消，請先完成節點標題。', 'invalid-node-title');
+      editor.focus();
+      return false;
+    }
+
+    render();
+    return true;
   };
 
   const exportDocument = (): void => {
+    if (!prepareExport()) {
+      return;
+    }
+
     try {
       const state = workflow.getState();
       const rescue = state.persistence === 'error';
@@ -452,8 +515,73 @@ export function bindWorkspaceInteractions(
       showFileMessage(rescue ? '已匯出救援檔案；本機保存警告仍然存在。' : '已匯出 QuickMind 原生檔案。');
     } catch (error) {
       const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'export-failed';
-      showFileMessage('匯出失敗，文件內容仍保留在目前工作區。', detail);
+      showFileMessage('匯出失敗，文件內容仍保留在目前工作區。', detail, exportDocument);
     }
+  };
+
+  const exportTextArtifact = (options: {
+    createArtifact: () => { filename: string; mimeType: string; source: string };
+    successMessage: string;
+    failureMessage: string;
+    failureDetail: string;
+    retry: () => void;
+  }): void => {
+    if (!prepareExport()) {
+      return;
+    }
+
+    try {
+      const artifact = options.createArtifact();
+      downloadTextFile(artifact.source, artifact.filename, artifact.mimeType);
+      render();
+      showFileMessage(options.successMessage);
+    } catch (error) {
+      const detail = error instanceof QuickMindFormatError
+        ? describeFormatError(error)
+        : error instanceof ExternalExportError ? error.code : options.failureDetail;
+      showFileMessage(options.failureMessage, detail, options.retry);
+    }
+  };
+
+  const exportMermaid = (): void => {
+    exportTextArtifact({
+      createArtifact: () => createMermaidArtifact(workflow.getState().document),
+      successMessage: '已匯出 Mermaid 原始碼。',
+      failureMessage: 'Mermaid 匯出失敗，文件內容仍保留在目前工作區。',
+      failureDetail: 'mermaid-export-failed',
+      retry: exportMermaid,
+    });
+  };
+
+  const exportDrawio = (): void => {
+    exportTextArtifact({
+      createArtifact: () => createDrawioArtifact(workflow.getState().document),
+      successMessage: '已匯出 draw.io 檔案。',
+      failureMessage: 'draw.io 匯出失敗，文件內容仍保留在目前工作區。',
+      failureDetail: 'drawio-export-failed',
+      retry: exportDrawio,
+    });
+  };
+
+  const exportPng = (): void => {
+    if (!prepareExport()) {
+      return;
+    }
+
+    const documentSnapshot = workflow.getState().document;
+    void createPngArtifact(documentSnapshot)
+      .then((artifact) => {
+        downloadArtifact(artifact.data, artifact.filename, artifact.mimeType);
+        render();
+        showFileMessage('已匯出 PNG 圖片。');
+      })
+      .catch((error: unknown) => {
+        const detail = error instanceof QuickMindFormatError
+          ? describeFormatError(error)
+          : error instanceof ExternalExportError ? error.code
+            : error instanceof PngExportError ? error.code : 'png-export-failed';
+        showFileMessage('PNG 匯出失敗，文件內容仍保留在目前工作區。', detail, exportPng);
+      });
   };
 
   const importFile = async (file: File): Promise<void> => {
@@ -587,6 +715,10 @@ export function bindWorkspaceInteractions(
 
   const onFileInputChange = (event: Event): void => {
     const input = event.target as HTMLInputElement;
+    if (!input.matches('[data-native-file-input]')) {
+      return;
+    }
+
     const file = input.files?.[0];
     input.value = '';
     if (file) {

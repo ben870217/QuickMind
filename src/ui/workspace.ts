@@ -34,6 +34,9 @@ export function renderWorkspace(container: HTMLElement, state: WorkspaceState): 
         <button class="history-button" type="button" data-history-action="redo" aria-label="重做（Ctrl／⌘+Shift+Z）" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" title="重做（Ctrl／⌘+Shift+Z）"${state.canRedo ? '' : ' disabled'}>↷ 重做</button>
         <button class="file-button" type="button" data-file-action="import" title="匯入 QuickMind 原生檔案"${importLocked ? ' disabled' : ''}>匯入 .quickmind</button>
         <button class="file-button" type="button" data-file-action="export" title="${importLocked ? '匯出救援檔案' : '匯出 QuickMind 原生檔案'}">${exportButtonLabel}</button>
+        <button class="file-button" type="button" data-file-action="export-png" title="匯出 PNG 圖片">匯出 PNG</button>
+        <button class="file-button" type="button" data-file-action="export-mermaid" title="匯出 Mermaid 原始碼">匯出 Mermaid</button>
+        <button class="file-button" type="button" data-file-action="export-drawio" title="匯出 draw.io 檔案">匯出 draw.io</button>
         ${importLocked ? '<button class="file-button" type="button" data-persistence-action="retry">立即重試保存</button>' : ''}
         <button class="file-button file-button-danger" type="button" data-file-action="clear" title="清除本機工作副本"${importLocked ? ' disabled' : ''}>清除本機</button>
         <input class="native-file-input" type="file" data-native-file-input accept=".quickmind" aria-label="選擇 QuickMind 原生檔案" />
