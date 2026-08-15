@@ -25,6 +25,8 @@ Stage 1 不以搜尋、PWA 安裝、大規模效能或外部格式互通為完�
 
 本專案的本地開發、檢查、測試、建置與預覽都透過 Docker Compose 執行；開發者不需要在主機直接安裝或執行 Node.js、npm、Vite 或 Playwright。
 
+依賴以 `package.json` 為準；`package-lock.json` 只供容器內 `npm ci` 鎖定版本，請勿在主機執行 `npm install`。依賴變更後請重建 Compose 映像，讓容器與 named volume 同步。
+
 需求：
 
 - Docker Desktop，或包含 Compose plugin 的 Docker Engine
