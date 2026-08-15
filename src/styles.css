@@ -261,14 +261,14 @@ h1 {
 
 .canvas-connection {
   fill: none;
-  stroke: #a6897d;
+  stroke: #776158;
   stroke-width: 2;
   opacity: 0.72;
   vector-effect: non-scaling-stroke;
 }
 
 .canvas-connection.is-emphasized {
-  stroke: #6f9580;
+  stroke: #5c7e6b;
   stroke-width: 3.5;
   opacity: 1;
 }

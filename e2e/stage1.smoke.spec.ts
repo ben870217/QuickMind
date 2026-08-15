@@ -115,6 +115,9 @@ test('keeps the native title editor inside the hierarchy', async ({ page }) => {
   await expect(editor.locator('xpath=ancestor::li[@data-node-id][1]').locator('[data-drag-node]')).toHaveCount(0);
   await expect(connections).toHaveCount(1);
 
+  await editor.fill('暫時標題');
+  await editor.press('Control+z');
+  await expect(editor).toHaveValue('第一個想法');
   await editor.fill('中文標題');
   await editor.press('Escape');
   await expect(page.getByRole('button', { name: '第一個想法', exact: true })).toBeVisible();
@@ -142,6 +145,15 @@ test('keeps native title editing inside canvas fullscreen', async ({ page }) => 
   await fullscreenButton.click();
   await page.waitForFunction(() => document.fullscreenElement !== null);
 
+  await page.getByRole('button', { name: '第一個想法', exact: true }).click();
+  await page.keyboard.press('F2');
+  await page.locator('[data-node-editor]').fill('取消中的標題');
+  await page.locator('[data-node-editor]').press('Escape');
+  await expect(page.getByRole('button', { name: '第一個想法', exact: true })).toBeVisible();
+  await page.waitForFunction(() => document.fullscreenElement === null);
+
+  await page.getByRole('button', { name: '進入全螢幕' }).click();
+  await page.waitForFunction(() => document.fullscreenElement !== null);
   await page.getByRole('button', { name: '第一個想法', exact: true }).click();
   await page.keyboard.press('F2');
   await page.locator('[data-node-editor]').fill('全螢幕編輯');
@@ -234,6 +246,7 @@ test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
     buffer: Buffer.from(JSON.stringify(importedDocument)),
   });
   await expect(page.getByRole('button', { name: '匯入後標題', exact: true })).toBeVisible();
+  await expect(page.locator('[data-connection]')).toHaveCount(2);
   await expect(page.locator('[data-workspace]')).toHaveAttribute('data-canvas-zoom', '1');
   await page.getByRole('button', { name: /復原/ }).click();
   await expect(page.getByRole('button', { name: '我的心智圖', exact: true })).toBeVisible();
@@ -243,6 +256,7 @@ test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
   await expect(page.locator('.app-status')).toHaveText('已保存到本機');
   await page.reload();
   await expect(page.getByRole('button', { name: '匯入後標題', exact: true })).toBeVisible();
+  await expect(page.locator('[data-connection]')).toHaveCount(2);
   await expect(page.getByText('已匯出原生檔')).toBeVisible();
 
   await context.setOffline(true);
@@ -253,5 +267,6 @@ test('covers the Stage 1 local-first workflow', async ({ page, context }) => {
   await page.locator('[data-node-editor]').fill('離線編輯');
   await page.locator('[data-node-editor]').press('Enter');
   await expect(page.getByRole('button', { name: '離線編輯', exact: true })).toBeVisible();
+  await expect(page.locator('[data-connection]')).toHaveCount(2);
   await context.setOffline(false);
 });

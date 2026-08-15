@@ -378,6 +378,7 @@ export function bindWorkspaceInteractions(
     const messageElement = workspace.querySelector<HTMLElement>('[data-file-message]');
     showFileMessage('無法進入全螢幕模式，仍維持一般畫布。', detail);
     messageElement?.setAttribute('data-fullscreen-error', 'true');
+    getFullscreenButton()?.focus();
   };
 
   const toggleFullscreen = async (): Promise<void> => {
@@ -402,7 +403,6 @@ export function bindWorkspaceInteractions(
 
     if (!document.fullscreenEnabled || typeof canvas.requestFullscreen !== 'function') {
       showFullscreenError('fullscreen-request-unsupported');
-      getFullscreenButton()?.focus();
       return;
     }
 
@@ -410,7 +410,6 @@ export function bindWorkspaceInteractions(
       await canvas.requestFullscreen();
     } catch {
       showFullscreenError('fullscreen-request-failed');
-      getFullscreenButton()?.focus();
     }
   };
 
@@ -665,7 +664,11 @@ export function bindWorkspaceInteractions(
         }
       } else if (event.key === 'Escape') {
         event.preventDefault();
+        const exitFullscreen = document.fullscreenElement === getCanvas();
         renderFocused(workflow.cancelEditing());
+        if (exitFullscreen) {
+          void toggleFullscreen();
+        }
       }
 
       return;
