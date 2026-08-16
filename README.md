@@ -21,6 +21,14 @@ Stage 1／v1 已聚焦於 50 個節點以下的單一本機心智圖核心流程
 
 Stage 1 不以搜尋、PWA 安裝、大規模效能或外部格式互通為完成前提。
 
+Stage 2 已完成搜尋、主題與 PWA 安裝能力：
+
+- 目前單一文件的節點標題搜尋、結果導覽、暫時展開與文件變更整合
+- 跟隨系統／Light／Dark 主題、首屏套用與瀏覽器 `theme-color` 同步
+- GitHub Pages base path 相容的 standalone manifest 與原生安裝提示
+
+Stage 2 的完整規格與驗收結果見 [Stage 2 規格](docs/stage2-search-theme-pwa-spec.md) 與 [Stage 2 驗收與發布紀錄](docs/stage2-acceptance.md)。
+
 ## 本地開發
 
 本專案的本地開發、檢查、測試、建置與預覽都透過 Docker Compose 執行；開發者不需要在主機直接安裝或執行 Node.js、npm、Vite 或 Playwright。
@@ -83,7 +91,9 @@ GitHub Actions 使用與本地相同的 Docker Compose 入口：
 
 ## 文件與 Stage 流程
 
-- [Stage 1／v1 規格](docs/stage1-v1-spec.md)：目前可交付範圍與驗收條件。
+- [Stage 1／v1 規格](docs/stage1-v1-spec.md)：核心可交付範圍與驗收條件。
+- [Stage 2 規格](docs/stage2-search-theme-pwa-spec.md)：搜尋、主題與 PWA 安裝的已接受契約。
+- [Stage 2 驗收與發布紀錄](docs/stage2-acceptance.md)：全量檢查與 base path 驗收結果。
 - [領域語言與邊界](CONTEXT.md)：QuickMind 的產品術語與版本共識。
 - [架構決策](docs/adr/)：已接受的設計取捨與發布決策。
 - [初始規格草稿](QuickMind.md)：歷史參考，不是目前實作的唯一依據。
@@ -95,12 +105,12 @@ GitHub Actions 使用與本地相同的 Docker Compose 入口：
 3. 與開發人員確認規格，收到明確的「接受」後才開始實作。
 4. 在該 Stage 完成後補上驗收、測試與發布紀錄。
 
-目前只完整定義 Stage 1；後續 Stage 只保留方向，細節等進入對應階段時再確認：
+Stage 1 與 Stage 2 已完成定義與驗收；後續 Stage 仍只保留方向，細節等進入對應階段時再確認：
 
 | Stage | 方向 | 現階段邊界 |
 | --- | --- | --- |
-| Stage 1 | 本機單文件核心 | 50 個節點以下正常使用，不要求搜尋 |
-| Stage 2 | 文件搜尋、PWA 安裝、Light／Dark 主題 | 尚未凍結介面與操作語義 |
+| Stage 1 | 本機單文件核心 | 已驗收；50 個節點以下正常使用 |
+| Stage 2 | 文件搜尋、PWA 安裝、Light／Dark 主題 | 已驗收；不修改原生文件格式 |
 | Stage 3 | 外部格式讀取、PNG／PDF／Mermaid／draw.io 輸出 | 尚未凍結格式與保真程度 |
 | Stage 4 | 依實際需求進行大規模渲染與效能最佳化 | 不預先承諾特定效能架構 |
 
@@ -108,4 +118,4 @@ GitHub Actions 使用與本地相同的 Docker Compose 入口：
 
 QuickMind v1 不提供登入、後端 API、雲端同步、團隊協作、遙測或行動瀏覽器正式支援。文件資料留在使用者瀏覽器本機；GitHub Pages 只負責提供前端資產。
 
-更完整的行為、資料格式與驗收條件請以 Stage 1 規格、`CONTEXT.md` 及已接受的 ADR 為準。
+更完整的行為、資料格式與驗收條件請以各 Stage 規格、`CONTEXT.md`、驗收紀錄及已接受的 ADR 為準。

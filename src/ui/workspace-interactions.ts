@@ -5,7 +5,9 @@ import {
   MAX_NODE_TITLE_LENGTH,
   normalizeNodeTitle,
   takeUserVisibleCharacters,
+  type QuickMindNode,
 } from '../domain/document';
+import { findNodeAncestorIds, findNodeTitleMatches } from '../domain/document-search';
 import {
   createQuickMindFilename,
   parseQuickMindDocument,
@@ -27,6 +29,19 @@ export function bindWorkspaceInteractions(
   let contextMenu: HTMLElement | null = null;
   let contextMenuNodeId: string | null = null;
   let draggingNodeId: string | null = null;
+  let searchDialog: HTMLElement | null = null;
+  let searchInput: HTMLInputElement | null = null;
+  let searchTrigger: HTMLElement | null = null;
+  let searchTriggerKind: 'element' | 'button' | 'editor' | 'canvas' | 'workspace' = 'workspace';
+  let searchTriggerNodeId: string | null = null;
+  let searchMatches: QuickMindNode[] = [];
+  let searchQuery = '';
+  let searchIndex = -1;
+  let searchOpen = false;
+  const manuallyCollapsedSearchNodeIds = new Set<string>();
+  let renderAndRefreshSearch = (): void => {
+    render();
+  };
   const minimumZoom = 0.5;
   const maximumZoom = 2;
   const maximumPan = 2_000;
@@ -115,17 +130,368 @@ export function bindWorkspaceInteractions(
   };
 
   const renderFocused = (state: ReturnType<DocumentWorkflow['getState']>): void => {
-    render();
-    focusNode(state.selectionId);
+    renderAndRefreshSearch();
+    if (!searchOpen) {
+      focusNode(state.selectionId);
+    }
   };
 
-  const selectNodeInPlace = (nodeId: string | null): void => {
+  const selectNodeInPlace = (nodeId: string | null, shouldFocus = true): void => {
     const state = workflow.selectNode(nodeId);
     workspace.querySelectorAll<HTMLElement>('[data-node-id]').forEach((node) => {
       node.setAttribute('aria-selected', node.dataset.nodeId === state.selectionId ? 'true' : 'false');
     });
     refreshConnections();
-    focusNode(state.selectionId);
+    if (shouldFocus) {
+      focusNode(state.selectionId);
+    }
+  };
+
+  const getSearchFocusableElements = (): HTMLElement[] => {
+    const candidates: Array<HTMLElement | null> = [
+    searchInput,
+    searchDialog?.querySelector<HTMLButtonElement>('[data-search-action="previous"]') ?? null,
+    searchDialog?.querySelector<HTMLButtonElement>('[data-search-action="next"]') ?? null,
+    searchDialog?.querySelector<HTMLButtonElement>('[data-search-action="close"]') ?? null,
+    ];
+    return candidates.filter((element): element is HTMLElement => Boolean(element && !element.hidden && !element.hasAttribute('disabled')));
+  };
+
+  const updateSearchDialog = (): void => {
+    if (!searchDialog) {
+      return;
+    }
+
+    const count = searchDialog.querySelector<HTMLElement>('[data-search-count]');
+    const emptyMessage = searchDialog.querySelector<HTMLElement>('[data-search-empty]');
+    const previousButton = searchDialog.querySelector<HTMLButtonElement>('[data-search-action="previous"]');
+    const nextButton = searchDialog.querySelector<HTMLButtonElement>('[data-search-action="next"]');
+    if (count) {
+      count.textContent = `${searchIndex >= 0 ? searchIndex + 1 : 0} / ${searchMatches.length}`;
+    }
+    if (emptyMessage) {
+      emptyMessage.hidden = searchQuery.length === 0 || searchMatches.length > 0;
+    }
+    if (previousButton) {
+      previousButton.disabled = searchMatches.length === 0;
+    }
+    if (nextButton) {
+      nextButton.disabled = searchMatches.length === 0;
+    }
+  };
+
+  const scrollToSearchMatch = (nodeId: string): void => {
+    const target = Array.from(workspace.querySelectorAll<HTMLElement>('[data-node-id]'))
+      .find((candidate) => candidate.dataset.nodeId === nodeId);
+    target?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+  };
+
+  const getSearchExpandedNodeIds = (): Set<string> => {
+    const encoded = workspace.dataset.searchExpanded;
+    if (!encoded) {
+      return new Set();
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(encoded);
+      return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+    } catch {
+      return new Set();
+    }
+  };
+
+  const addSearchAncestors = (nodeId: string): boolean => {
+    const expanded = getSearchExpandedNodeIds();
+    const next = new Set(expanded);
+    const root = workflow.getState().document.root;
+    findNodeAncestorIds(root, nodeId).forEach((ancestorId) => {
+      if (!manuallyCollapsedSearchNodeIds.has(ancestorId) && findNode(root, ancestorId)?.isCollapsed) {
+        next.add(ancestorId);
+      }
+    });
+    if (next.size === expanded.size && [...next].every((id) => expanded.has(id))) {
+      return false;
+    }
+
+    workspace.dataset.searchExpanded = JSON.stringify([...next]);
+    return true;
+  };
+
+  const clearSearchExpanded = (nodeId?: string): void => {
+    if (!nodeId) {
+      delete workspace.dataset.searchExpanded;
+      return;
+    }
+
+    const expanded = getSearchExpandedNodeIds();
+    if (!expanded.delete(nodeId)) {
+      return;
+    }
+    if (expanded.size === 0) {
+      delete workspace.dataset.searchExpanded;
+    } else {
+      workspace.dataset.searchExpanded = JSON.stringify([...expanded]);
+    }
+  };
+
+  const resolveSearchTrigger = (): HTMLElement | null => {
+    if (searchTrigger?.isConnected) {
+      return searchTrigger;
+    }
+
+    if (searchTriggerKind === 'button') {
+      return workspace.querySelector<HTMLElement>('[data-search-action="open"]');
+    }
+    if (searchTriggerKind === 'editor' && searchTriggerNodeId) {
+      return Array.from(workspace.querySelectorAll<HTMLElement>('[data-node-editor]'))
+        .find((candidate) => candidate.dataset.nodeId === searchTriggerNodeId) ?? null;
+    }
+    if (searchTriggerKind === 'canvas') {
+      return getCanvas();
+    }
+    if (searchTriggerKind === 'workspace') {
+      return workspace;
+    }
+
+    return null;
+  };
+
+  const handleManualSearchCollapse = (nodeId: string): boolean => {
+    const state = workflow.getState();
+    if (state.editing?.isNew) {
+      return false;
+    }
+
+    const node = findNode(state.document.root, nodeId);
+    const isTemporaryExpansion = Boolean(node?.isCollapsed && getSearchExpandedNodeIds().has(nodeId));
+    if (!isTemporaryExpansion) {
+      manuallyCollapsedSearchNodeIds.delete(nodeId);
+      clearSearchExpanded(nodeId);
+      return false;
+    }
+
+    manuallyCollapsedSearchNodeIds.add(nodeId);
+    clearSearchExpanded(nodeId);
+    renderAndRefreshSearch();
+    if (!searchOpen) {
+      focusNode(nodeId);
+    }
+    return true;
+  };
+
+  const revealSearchMatch = (nodeId: string): void => {
+    if (workflow.getState().editing) {
+      return;
+    }
+    if (addSearchAncestors(nodeId)) {
+      render();
+    }
+    selectNodeInPlace(nodeId, false);
+    scrollToSearchMatch(nodeId);
+  };
+
+  const recalculateSearchResults = (preserveRemovedIndex = false): void => {
+    const previousMatchId = searchMatches[searchIndex]?.id ?? null;
+    const previousIndex = searchIndex;
+    searchMatches = findNodeTitleMatches(workflow.getState().document.root, searchQuery);
+
+    if (searchQuery.length === 0) {
+      searchIndex = -1;
+      updateSearchDialog();
+      searchInput?.focus();
+      return;
+    }
+
+    if (searchMatches.length === 0) {
+      searchIndex = -1;
+      const editing = workflow.getState().editing;
+      if (editing?.isNew) {
+        workspace.querySelectorAll<HTMLElement>('[data-node-id]').forEach((node) => {
+          node.setAttribute('aria-selected', 'false');
+        });
+      } else {
+        selectNodeInPlace(null, false);
+      }
+      updateSearchDialog();
+      searchInput?.focus();
+      return;
+    }
+
+    const preservedIndex = previousMatchId
+      ? searchMatches.findIndex((match) => match.id === previousMatchId)
+      : -1;
+    searchIndex = preservedIndex >= 0
+      ? preservedIndex
+      : preserveRemovedIndex && previousIndex >= 0
+        ? Math.min(previousIndex, searchMatches.length - 1)
+        : 0;
+    const match = searchMatches[searchIndex];
+    revealSearchMatch(match.id);
+    updateSearchDialog();
+    searchInput?.focus();
+  };
+
+  const moveSearchResult = (direction: 1 | -1): void => {
+    if (searchMatches.length === 0 || workflow.getState().editing) {
+      return;
+    }
+
+    manuallyCollapsedSearchNodeIds.clear();
+    searchIndex = (searchIndex + direction + searchMatches.length) % searchMatches.length;
+    const match = searchMatches[searchIndex];
+    revealSearchMatch(match.id);
+    updateSearchDialog();
+    searchInput?.focus();
+  };
+
+  const closeSearch = (): void => {
+    if (!searchOpen) {
+      return;
+    }
+
+    const editing = Boolean(workflow.getState().editing);
+    const resultNodeId = searchIndex >= 0 ? searchMatches[searchIndex]?.id ?? null : null;
+    const trigger = resolveSearchTrigger();
+    searchOpen = false;
+    searchDialog?.remove();
+    searchDialog = null;
+    searchInput = null;
+    searchMatches = [];
+    searchQuery = '';
+    searchIndex = -1;
+    searchTrigger = null;
+    searchTriggerKind = 'workspace';
+    searchTriggerNodeId = null;
+    manuallyCollapsedSearchNodeIds.clear();
+
+    if (editing) {
+      focusEditor();
+    } else if (resultNodeId) {
+      focusNode(resultNodeId);
+    } else if (trigger) {
+      trigger.focus();
+    } else {
+      focusNode(workflow.getState().selectionId);
+    }
+  };
+
+  const onSearchDialogKeyDown = (event: KeyboardEvent): void => {
+    if (!searchOpen) {
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSearch();
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      const focusable = getSearchFocusableElements();
+      if (focusable.length === 0) {
+        return;
+      }
+
+      const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+      const nextIndex = event.shiftKey
+        ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
+        : (currentIndex < 0 || currentIndex === focusable.length - 1 ? 0 : currentIndex + 1);
+      event.preventDefault();
+      focusable[nextIndex]?.focus();
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveSearchResult(event.shiftKey ? -1 : 1);
+    } else if (event.key === 'ArrowUp' || (event.key === 'Enter' && event.shiftKey)) {
+      event.preventDefault();
+      moveSearchResult(-1);
+    }
+  };
+
+  const onSearchDialogInput = (event: Event): void => {
+    const input = event.target as HTMLInputElement;
+    if (input !== searchInput) {
+      return;
+    }
+
+    searchQuery = input.value;
+    manuallyCollapsedSearchNodeIds.clear();
+    recalculateSearchResults();
+  };
+
+  const onSearchDialogClick = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement;
+    const action = target.closest<HTMLButtonElement>('[data-search-action]')?.dataset.searchAction;
+    if (action === 'previous') {
+      moveSearchResult(-1);
+    } else if (action === 'next') {
+      moveSearchResult(1);
+    } else if (action === 'close') {
+      closeSearch();
+    }
+  };
+
+  const openSearch = (trigger: HTMLElement): void => {
+    if (searchOpen) {
+      searchInput?.focus();
+      return;
+    }
+
+    searchOpen = true;
+    searchTrigger = trigger;
+    searchTriggerKind = 'element';
+    searchTriggerNodeId = null;
+    if (trigger.matches('[data-search-action="open"]')) {
+      searchTriggerKind = 'button';
+    } else {
+      const editor = trigger.closest<HTMLElement>('[data-node-editor]');
+      const canvas = trigger.closest<HTMLElement>('[data-canvas]');
+      if (editor) {
+        searchTriggerKind = 'editor';
+        searchTriggerNodeId = editor.dataset.nodeId ?? null;
+      } else if (canvas) {
+        searchTriggerKind = 'canvas';
+      } else if (trigger === workspace) {
+        searchTriggerKind = 'workspace';
+      }
+    }
+    manuallyCollapsedSearchNodeIds.clear();
+    searchQuery = '';
+    searchMatches = [];
+    searchIndex = -1;
+    searchDialog = document.createElement('section');
+    searchDialog.className = 'search-dialog';
+    searchDialog.dataset.searchDialog = 'true';
+    searchDialog.setAttribute('role', 'dialog');
+    searchDialog.setAttribute('aria-labelledby', 'search-dialog-title');
+    searchDialog.innerHTML = `
+      <h2 id="search-dialog-title">搜尋</h2>
+      <label class="search-label" for="search-node-title">搜尋節點標題</label>
+      <input id="search-node-title" class="search-input" type="text" data-search-input aria-label="搜尋節點標題" autocomplete="off" />
+      <p class="search-count" data-search-count aria-live="polite">0 / 0</p>
+      <p class="search-empty" data-search-empty role="status" hidden>找不到符合的節點</p>
+      <div class="search-actions">
+        <button class="file-button" type="button" data-search-action="previous">上一筆</button>
+        <button class="file-button" type="button" data-search-action="next">下一筆</button>
+        <button class="file-button" type="button" data-search-action="close">關閉</button>
+      </div>
+    `;
+    searchInput = searchDialog.querySelector<HTMLInputElement>('[data-search-input]');
+    searchDialog.addEventListener('keydown', onSearchDialogKeyDown);
+    searchDialog.addEventListener('input', onSearchDialogInput);
+    searchDialog.addEventListener('click', onSearchDialogClick);
+    document.body.append(searchDialog);
+    updateSearchDialog();
+    searchInput?.focus();
+  };
+
+  renderAndRefreshSearch = (): void => {
+    render();
+    if (searchOpen) {
+      recalculateSearchResults(true);
+    }
   };
 
   const updateTitleCounter = (editor: HTMLInputElement): void => {
@@ -155,24 +521,32 @@ export function bindWorkspaceInteractions(
 
     if (action === 'add-child') {
       workflow.addChild(nodeId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     } else if (action === 'add-sibling') {
       workflow.addSibling(nodeId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     } else if (action === 'rename') {
       workflow.beginEditing(nodeId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     } else if (action === 'delete') {
       workflow.deleteNode(nodeId);
-      render();
-      focusNode(workflow.getState().selectionId);
+      renderAndRefreshSearch();
+      if (!searchOpen) {
+        focusNode(workflow.getState().selectionId);
+      }
     } else if (action === 'collapse') {
+      if (handleManualSearchCollapse(nodeId)) {
+        return;
+      }
+      clearSearchExpanded(nodeId);
       workflow.toggleCollapse(nodeId);
-      render();
-      focusNode(nodeId);
+      renderAndRefreshSearch();
+      if (!searchOpen) {
+        focusNode(nodeId);
+      }
     }
   };
 
@@ -248,6 +622,12 @@ export function bindWorkspaceInteractions(
 
   const onClick = (event: MouseEvent): void => {
     const target = event.target as HTMLElement;
+    const searchAction = target.closest<HTMLButtonElement>('[data-search-action="open"]');
+    if (searchAction) {
+      openSearch(searchAction);
+      return;
+    }
+
     const canvasAction = target.closest<HTMLButtonElement>('[data-canvas-action]');
     if (canvasAction?.dataset.canvasAction === 'fullscreen') {
       void toggleFullscreen();
@@ -257,7 +637,7 @@ export function bindWorkspaceInteractions(
     const persistenceAction = target.closest<HTMLButtonElement>('[data-persistence-action]');
     if (persistenceAction?.dataset.persistenceAction === 'retry') {
       workflow.retrySave();
-      render();
+      renderAndRefreshSearch();
       showFileMessage('正在重試保存本機工作副本。');
       return;
     }
@@ -285,7 +665,9 @@ export function bindWorkspaceInteractions(
         }
 
         void workflow.clearDocument().then((nextState) => {
-          render();
+          clearSearchExpanded();
+          manuallyCollapsedSearchNodeIds.clear();
+          renderAndRefreshSearch();
           showFileMessage(
             nextState.persistence === 'error' ? '清除後的新文件未保存到本機。' : '已清除並建立新的本機文件。',
             nextState.persistence === 'error' ? 'save-failed' : undefined,
@@ -306,6 +688,10 @@ export function bindWorkspaceInteractions(
 
     const collapseButton = target.closest<HTMLButtonElement>('[data-collapse-node]');
     if (collapseButton) {
+      if (handleManualSearchCollapse(collapseButton.dataset.collapseNode ?? '')) {
+        return;
+      }
+      clearSearchExpanded(collapseButton.dataset.collapseNode);
       renderFocused(workflow.toggleCollapse(collapseButton.dataset.collapseNode ?? null));
       return;
     }
@@ -334,7 +720,7 @@ export function bindWorkspaceInteractions(
     }
 
     workflow.beginEditing(node.dataset.nodeId ?? '');
-    render();
+    renderAndRefreshSearch();
     focusEditor();
   };
 
@@ -355,7 +741,7 @@ export function bindWorkspaceInteractions(
 
     event.preventDefault();
     workflow.selectNode(nodeId);
-    render();
+    renderAndRefreshSearch();
     openContextMenu(nodeId, event.clientX, event.clientY);
   };
 
@@ -494,7 +880,7 @@ export function bindWorkspaceInteractions(
       return false;
     }
 
-    render();
+    renderAndRefreshSearch();
     return true;
   };
 
@@ -511,7 +897,7 @@ export function bindWorkspaceInteractions(
       if (!rescue) {
         workflow.markExported();
       }
-      render();
+      renderAndRefreshSearch();
       showFileMessage(rescue ? '已匯出救援檔案；本機保存警告仍然存在。' : '已匯出 QuickMind 原生檔案。');
     } catch (error) {
       const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'export-failed';
@@ -533,7 +919,7 @@ export function bindWorkspaceInteractions(
     try {
       const artifact = options.createArtifact();
       downloadTextFile(artifact.source, artifact.filename, artifact.mimeType);
-      render();
+      renderAndRefreshSearch();
       showFileMessage(options.successMessage);
     } catch (error) {
       const detail = error instanceof QuickMindFormatError
@@ -572,7 +958,7 @@ export function bindWorkspaceInteractions(
     void createPngArtifact(documentSnapshot)
       .then((artifact) => {
         downloadArtifact(artifact.data, artifact.filename, artifact.mimeType);
-        render();
+        renderAndRefreshSearch();
         showFileMessage('已匯出 PNG 圖片。');
       })
       .catch((error: unknown) => {
@@ -604,9 +990,11 @@ export function bindWorkspaceInteractions(
       const document = parseQuickMindDocument(await file.text());
       const changed = workflow.replaceDocument(document);
       if (changed) {
+        clearSearchExpanded();
+        manuallyCollapsedSearchNodeIds.clear();
         setCanvasView({ zoom: 1, panX: 0, panY: 0 });
       }
-      render();
+      renderAndRefreshSearch();
       showFileMessage(changed ? '已匯入 QuickMind 原生檔案。' : '匯入內容與目前文件相同，未產生變更。');
     } catch (error) {
       const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'import-failed';
@@ -709,8 +1097,10 @@ export function bindWorkspaceInteractions(
     const movedNodeId = draggingNodeId;
     workflow.moveNode(movedNodeId, targetId, position);
     clearDropIndicator();
-    render();
-    focusNode(movedNodeId);
+    renderAndRefreshSearch();
+    if (!searchOpen) {
+      focusNode(movedNodeId);
+    }
   };
 
   const onFileInputChange = (event: Event): void => {
@@ -778,6 +1168,7 @@ export function bindWorkspaceInteractions(
 
   const onKeyDown = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement;
+
     const editor = target.closest<HTMLInputElement>('[data-node-editor]');
 
     if (editor) {
@@ -791,7 +1182,7 @@ export function bindWorkspaceInteractions(
         if (committed) {
           renderFocused(workflow.getState());
         } else if (workflow.getState().limitError) {
-          render();
+          renderAndRefreshSearch();
           focusEditor();
         }
       } else if (event.key === 'Escape') {
@@ -813,7 +1204,6 @@ export function bindWorkspaceInteractions(
     }
 
     const state = workflow.getState();
-    const modifier = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
     const canvasFocused = Boolean(target.closest('[data-canvas]')) || target === workspace;
     if (canvasFocused && (event.key === '+' || event.key === '=')) {
@@ -830,7 +1220,7 @@ export function bindWorkspaceInteractions(
     } else if (canvasFocused && key === 'f') {
       event.preventDefault();
       focusCanvasTarget(state.selectionId);
-    } else if (modifier && key === 'z') {
+    } else if ((event.ctrlKey || event.metaKey) && key === 'z') {
       event.preventDefault();
       const nextState = event.shiftKey ? workflow.redo() : workflow.undo();
       renderFocused(nextState);
@@ -852,6 +1242,10 @@ export function bindWorkspaceInteractions(
       renderFocused(workflow.navigate('right'));
     } else if (event.key === ' ') {
       event.preventDefault();
+      if (state.selectionId && handleManualSearchCollapse(state.selectionId)) {
+        return;
+      }
+      clearSearchExpanded(state.selectionId ?? undefined);
       renderFocused(workflow.toggleCollapse(state.selectionId));
     } else if (event.key === 'Delete') {
       event.preventDefault();
@@ -861,18 +1255,30 @@ export function bindWorkspaceInteractions(
     } else if (event.key === 'Enter') {
       event.preventDefault();
       workflow.addSibling(state.selectionId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     } else if (event.key === 'Tab') {
       event.preventDefault();
       workflow.addChild(state.selectionId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     } else if (event.key === 'F2') {
       event.preventDefault();
       workflow.beginEditing(state.selectionId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
+    }
+  };
+
+  const onGlobalKeyDown = (event: KeyboardEvent): void => {
+    if (searchDialog?.contains(event.target as Node)) {
+      return;
+    }
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      const trigger = event.target instanceof HTMLElement ? event.target : workspace;
+      openSearch(trigger);
     }
   };
 
@@ -888,6 +1294,7 @@ export function bindWorkspaceInteractions(
   workspace.addEventListener('input', onInput);
   workspace.addEventListener('wheel', onWheel, { passive: false });
   workspace.addEventListener('change', onFileInputChange);
+  document.addEventListener('keydown', onGlobalKeyDown);
   document.addEventListener('pointerdown', onDocumentPointerDown);
   document.addEventListener('fullscreenchange', onFullscreenChange);
   window.addEventListener('resize', onViewportResize);
@@ -895,6 +1302,7 @@ export function bindWorkspaceInteractions(
 
   return () => {
     closeContextMenu(false);
+    closeSearch();
     workspace.removeEventListener('click', onClick);
     workspace.removeEventListener('dblclick', onDoubleClick);
     workspace.removeEventListener('contextmenu', onContextMenu);
@@ -907,6 +1315,7 @@ export function bindWorkspaceInteractions(
     workspace.removeEventListener('input', onInput);
     workspace.removeEventListener('wheel', onWheel);
     workspace.removeEventListener('change', onFileInputChange);
+    document.removeEventListener('keydown', onGlobalKeyDown);
     document.removeEventListener('pointerdown', onDocumentPointerDown);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
     window.removeEventListener('resize', onViewportResize);

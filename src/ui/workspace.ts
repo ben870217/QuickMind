@@ -22,6 +22,7 @@ export function renderWorkspace(container: HTMLElement, state: WorkspaceState): 
   const limitMessage = state.limitError
     ? `操作已拒絕：目前 ${state.limitError.nodeCount.toLocaleString()} / ${state.limitError.maxNodes.toLocaleString()} 個節點、${state.limitError.byteLength.toLocaleString()} / ${state.limitError.maxBytes.toLocaleString()} bytes。`
     : '';
+  const searchExpandedNodeIds = getSearchExpandedNodeIds(container);
 
   const currentCanvas = container.querySelector<HTMLElement>('[data-canvas]');
   const fullscreenCanvas = typeof document !== 'undefined' && document.fullscreenElement === currentCanvas
@@ -32,6 +33,7 @@ export function renderWorkspace(container: HTMLElement, state: WorkspaceState): 
       <div class="workspace-toolbar">
         <button class="history-button" type="button" data-history-action="undo" aria-label="復原（Ctrl／⌘+Z）" aria-keyshortcuts="Control+Z Meta+Z" title="復原（Ctrl／⌘+Z）"${state.canUndo ? '' : ' disabled'}>↶ 復原</button>
         <button class="history-button" type="button" data-history-action="redo" aria-label="重做（Ctrl／⌘+Shift+Z）" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" title="重做（Ctrl／⌘+Shift+Z）"${state.canRedo ? '' : ' disabled'}>↷ 重做</button>
+        <button class="file-button" type="button" data-search-action="open" aria-keyshortcuts="Control+F Meta+F" title="搜尋節點標題">搜尋</button>
         <button class="file-button" type="button" data-file-action="import" title="匯入 QuickMind 原生檔案"${importLocked ? ' disabled' : ''}>匯入 .quickmind</button>
         <button class="file-button" type="button" data-file-action="export" title="${importLocked ? '匯出救援檔案' : '匯出 QuickMind 原生檔案'}">${exportButtonLabel}</button>
         <button class="file-button" type="button" data-file-action="export-png" title="匯出 PNG 圖片">匯出 PNG</button>
@@ -51,7 +53,7 @@ export function renderWorkspace(container: HTMLElement, state: WorkspaceState): 
           <article class="root-node" data-canvas-scene>
             <svg class="canvas-connections" data-connection-layer aria-hidden="true" focusable="false"></svg>
             <p class="node-kicker">根節點</p>
-            <ul class="mindmap-tree" role="tree">${renderNode(state.document.root, state, 1)}</ul>
+            <ul class="mindmap-tree" role="tree">${renderNode(state.document.root, state, 1, searchExpandedNodeIds)}</ul>
             <p class="workspace-hint">目前文件已準備好，可以開始整理階層。</p>
           </article>
         </div>
@@ -96,11 +98,12 @@ export interface WorkspaceConnection {
 export function getVisibleWorkspaceConnections(
   root: WorkspaceState['document']['root'],
   selectionId: string | null,
+  searchExpandedNodeIds: ReadonlySet<string> = new Set(),
 ): WorkspaceConnection[] {
   const connections: WorkspaceConnection[] = [];
 
   const visit = (node: WorkspaceState['document']['root']): void => {
-    if (node.isCollapsed) {
+    if (node.isCollapsed && !searchExpandedNodeIds.has(node.id)) {
       return;
     }
 
@@ -127,7 +130,11 @@ export function renderWorkspaceConnections(container: HTMLElement, state: Worksp
 
   const zoom = clamp(Number(container.dataset.canvasZoom ?? 1), 0.5, 2);
   const sceneBounds = scene.getBoundingClientRect();
-  const connections = getVisibleWorkspaceConnections(state.document.root, state.selectionId);
+  const connections = getVisibleWorkspaceConnections(
+    state.document.root,
+    state.selectionId,
+    getSearchExpandedNodeIds(container),
+  );
   const rowByNodeId = new Map<string, DOMRect>();
 
   container.querySelectorAll<HTMLElement>('[data-node-id]').forEach((nodeElement) => {
@@ -180,10 +187,10 @@ export function renderWorkspaceConnections(container: HTMLElement, state: Worksp
   layer.innerHTML = `
     <defs>
       <marker id="quickmind-connection-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
-        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="#776158"></path>
+        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="var(--qm-connection)"></path>
       </marker>
       <marker id="quickmind-connection-arrow-emphasized" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
-        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="#5c7e6b"></path>
+        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="var(--qm-connection-emphasis)"></path>
       </marker>
     </defs>
     ${paths.join('')}
@@ -194,21 +201,41 @@ function roundCoordinate(value: number): string {
   return (Math.round(value * 100) / 100).toString();
 }
 
-function renderNode(node: WorkspaceState['document']['root'], state: WorkspaceState, level: number): string {
+function renderNode(
+  node: WorkspaceState['document']['root'],
+  state: WorkspaceState,
+  level: number,
+  searchExpandedNodeIds: ReadonlySet<string>,
+): string {
   const editing = state.editing?.nodeId === node.id;
+  const isExpanded = !node.isCollapsed || searchExpandedNodeIds.has(node.id);
   const toggle = node.children.length > 0
-    ? `<button class="node-toggle" type="button" data-collapse-node="${node.id}" aria-label="${node.isCollapsed ? '展開' : '收合'} ${escapeHtml(node.text)}">${node.isCollapsed ? '▸' : '▾'}</button>`
+    ? `<button class="node-toggle" type="button" data-collapse-node="${node.id}" aria-label="${isExpanded ? '收合' : '展開'} ${escapeHtml(node.text)}">${isExpanded ? '▾' : '▸'}</button>`
     : '<span class="node-toggle-placeholder" aria-hidden="true"></span>';
   const titleCount = countUserVisibleCharacters(node.text);
   const titleCountId = `title-count-${node.id}`;
   const content = editing
     ? `<div class="node-editor-wrap"><input class="node-editor" data-node-editor data-node-id="${node.id}" value="${escapeHtml(node.text)}" aria-describedby="${titleCountId}" aria-label="編輯節點標題" /><span class="title-counter" id="${titleCountId}" data-title-count>還可輸入 ${MAX_NODE_TITLE_LENGTH - titleCount} 個字元</span></div>`
     : `<button class="node-card" type="button" data-node-id="${node.id}" data-drag-node="${node.id}" draggable="${level > 1}" aria-grabbed="false" aria-selected="${state.selectionId === node.id}">${escapeHtml(node.text)}</button>`;
-  const children = node.children.length > 0 && !node.isCollapsed
-    ? `<ul class="mindmap-children" role="group">${node.children.map((child) => renderNode(child, state, level + 1)).join('')}</ul>`
+  const children = node.children.length > 0 && isExpanded
+    ? `<ul class="mindmap-children" role="group">${node.children.map((child) => renderNode(child, state, level + 1, searchExpandedNodeIds)).join('')}</ul>`
     : '';
 
-  return `<li class="mindmap-node" role="treeitem" aria-level="${level}" aria-expanded="${node.children.length > 0 ? !node.isCollapsed : 'false'}" aria-selected="${state.selectionId === node.id}" data-node-id="${node.id}"><div class="node-row" data-drop-target="${node.id}">${toggle}${content}</div>${children}</li>`;
+  return `<li class="mindmap-node" role="treeitem" aria-level="${level}" aria-expanded="${node.children.length > 0 ? isExpanded : 'false'}" aria-selected="${state.selectionId === node.id}" data-node-id="${node.id}"><div class="node-row" data-drop-target="${node.id}">${toggle}${content}</div>${children}</li>`;
+}
+
+function getSearchExpandedNodeIds(container: HTMLElement): Set<string> {
+  const encoded = container.dataset.searchExpanded;
+  if (!encoded) {
+    return new Set();
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(encoded);
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+  } catch {
+    return new Set();
+  }
 }
 
 function finiteNumber(value: string | undefined): number {

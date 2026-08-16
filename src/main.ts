@@ -4,6 +4,8 @@ import { renderWorkspace } from './ui/workspace';
 import { DocumentWorkflow } from './workspace/document-workflow';
 import { IndexedDbWorkspaceStore } from './persistence/workspace-store';
 import { registerServiceWorker } from './platform/service-worker';
+import { initializeTheme } from './platform/theme';
+import { initializeInstallPrompt } from './platform/install-prompt';
 import { bindWorkspaceInteractions } from './ui/workspace-interactions';
 
 const app = document.querySelector<HTMLElement>('#app');
@@ -13,6 +15,8 @@ if (!app) {
 }
 
 app.innerHTML = renderAppShell();
+initializeTheme();
+initializeInstallPrompt();
 void registerServiceWorker();
 
 const workspace = app.querySelector<HTMLElement>('[data-workspace]');

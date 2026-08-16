@@ -6,7 +6,17 @@ export function renderAppShell(): string {
           <p class="eyebrow">LOCAL-FIRST MIND MAPPING</p>
           <h1>QuickMind</h1>
         </div>
-        <p class="app-status" data-app-status role="status">準備中</p>
+        <div class="app-header-tools">
+          <label class="theme-control" for="theme-select">介面主題
+            <select id="theme-select" data-theme-select>
+              <option value="system">跟隨系統</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <button class="file-button install-button" type="button" data-install-action="prompt" hidden>安裝 QuickMind</button>
+          <p class="app-status" data-app-status role="status">準備中</p>
+        </div>
       </header>
       <main class="workspace" data-workspace tabindex="0" aria-label="QuickMind 工作區">
         <section class="canvas-placeholder" aria-labelledby="welcome-title">
