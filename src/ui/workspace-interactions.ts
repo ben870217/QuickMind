@@ -32,10 +32,13 @@ export function bindWorkspaceInteractions(
   let searchDialog: HTMLElement | null = null;
   let searchInput: HTMLInputElement | null = null;
   let searchTrigger: HTMLElement | null = null;
+  let searchTriggerKind: 'element' | 'button' | 'editor' | 'canvas' | 'workspace' = 'workspace';
+  let searchTriggerNodeId: string | null = null;
   let searchMatches: QuickMindNode[] = [];
   let searchQuery = '';
   let searchIndex = -1;
   let searchOpen = false;
+  const manuallyCollapsedSearchNodeIds = new Set<string>();
   let renderAndRefreshSearch = (): void => {
     render();
   };
@@ -200,7 +203,12 @@ export function bindWorkspaceInteractions(
   const addSearchAncestors = (nodeId: string): boolean => {
     const expanded = getSearchExpandedNodeIds();
     const next = new Set(expanded);
-    findNodeAncestorIds(workflow.getState().document.root, nodeId).forEach((ancestorId) => next.add(ancestorId));
+    const root = workflow.getState().document.root;
+    findNodeAncestorIds(root, nodeId).forEach((ancestorId) => {
+      if (!manuallyCollapsedSearchNodeIds.has(ancestorId) && findNode(root, ancestorId)?.isCollapsed) {
+        next.add(ancestorId);
+      }
+    });
     if (next.size === expanded.size && [...next].every((id) => expanded.has(id))) {
       return false;
     }
@@ -224,6 +232,51 @@ export function bindWorkspaceInteractions(
     } else {
       workspace.dataset.searchExpanded = JSON.stringify([...expanded]);
     }
+  };
+
+  const resolveSearchTrigger = (): HTMLElement | null => {
+    if (searchTrigger?.isConnected) {
+      return searchTrigger;
+    }
+
+    if (searchTriggerKind === 'button') {
+      return workspace.querySelector<HTMLElement>('[data-search-action="open"]');
+    }
+    if (searchTriggerKind === 'editor' && searchTriggerNodeId) {
+      return Array.from(workspace.querySelectorAll<HTMLElement>('[data-node-editor]'))
+        .find((candidate) => candidate.dataset.nodeId === searchTriggerNodeId) ?? null;
+    }
+    if (searchTriggerKind === 'canvas') {
+      return getCanvas();
+    }
+    if (searchTriggerKind === 'workspace') {
+      return workspace;
+    }
+
+    return null;
+  };
+
+  const handleManualSearchCollapse = (nodeId: string): boolean => {
+    const state = workflow.getState();
+    if (state.editing?.isNew) {
+      return false;
+    }
+
+    const node = findNode(state.document.root, nodeId);
+    const isTemporaryExpansion = Boolean(node?.isCollapsed && getSearchExpandedNodeIds().has(nodeId));
+    if (!isTemporaryExpansion) {
+      manuallyCollapsedSearchNodeIds.delete(nodeId);
+      clearSearchExpanded(nodeId);
+      return false;
+    }
+
+    manuallyCollapsedSearchNodeIds.add(nodeId);
+    clearSearchExpanded(nodeId);
+    renderAndRefreshSearch();
+    if (!searchOpen) {
+      focusNode(nodeId);
+    }
+    return true;
   };
 
   const revealSearchMatch = (nodeId: string): void => {
@@ -278,6 +331,7 @@ export function bindWorkspaceInteractions(
       return;
     }
 
+    manuallyCollapsedSearchNodeIds.clear();
     searchIndex = (searchIndex + direction + searchMatches.length) % searchMatches.length;
     const match = searchMatches[searchIndex];
     revealSearchMatch(match.id);
@@ -292,7 +346,7 @@ export function bindWorkspaceInteractions(
 
     const editing = Boolean(workflow.getState().editing);
     const resultNodeId = searchIndex >= 0 ? searchMatches[searchIndex]?.id ?? null : null;
-    const trigger = searchTrigger;
+    const trigger = resolveSearchTrigger();
     searchOpen = false;
     searchDialog?.remove();
     searchDialog = null;
@@ -301,12 +355,15 @@ export function bindWorkspaceInteractions(
     searchQuery = '';
     searchIndex = -1;
     searchTrigger = null;
+    searchTriggerKind = 'workspace';
+    searchTriggerNodeId = null;
+    manuallyCollapsedSearchNodeIds.clear();
 
     if (editing) {
       focusEditor();
     } else if (resultNodeId) {
       focusNode(resultNodeId);
-    } else if (trigger?.isConnected) {
+    } else if (trigger) {
       trigger.focus();
     } else {
       focusNode(workflow.getState().selectionId);
@@ -355,6 +412,7 @@ export function bindWorkspaceInteractions(
     }
 
     searchQuery = input.value;
+    manuallyCollapsedSearchNodeIds.clear();
     recalculateSearchResults();
   };
 
@@ -378,6 +436,23 @@ export function bindWorkspaceInteractions(
 
     searchOpen = true;
     searchTrigger = trigger;
+    searchTriggerKind = 'element';
+    searchTriggerNodeId = null;
+    if (trigger.matches('[data-search-action="open"]')) {
+      searchTriggerKind = 'button';
+    } else {
+      const editor = trigger.closest<HTMLElement>('[data-node-editor]');
+      const canvas = trigger.closest<HTMLElement>('[data-canvas]');
+      if (editor) {
+        searchTriggerKind = 'editor';
+        searchTriggerNodeId = editor.dataset.nodeId ?? null;
+      } else if (canvas) {
+        searchTriggerKind = 'canvas';
+      } else if (trigger === workspace) {
+        searchTriggerKind = 'workspace';
+      }
+    }
+    manuallyCollapsedSearchNodeIds.clear();
     searchQuery = '';
     searchMatches = [];
     searchIndex = -1;
@@ -458,6 +533,9 @@ export function bindWorkspaceInteractions(
         focusNode(workflow.getState().selectionId);
       }
     } else if (action === 'collapse') {
+      if (handleManualSearchCollapse(nodeId)) {
+        return;
+      }
       clearSearchExpanded(nodeId);
       workflow.toggleCollapse(nodeId);
       renderAndRefreshSearch();
@@ -604,6 +682,9 @@ export function bindWorkspaceInteractions(
 
     const collapseButton = target.closest<HTMLButtonElement>('[data-collapse-node]');
     if (collapseButton) {
+      if (handleManualSearchCollapse(collapseButton.dataset.collapseNode ?? '')) {
+        return;
+      }
       clearSearchExpanded(collapseButton.dataset.collapseNode);
       renderFocused(workflow.toggleCollapse(collapseButton.dataset.collapseNode ?? null));
       return;
@@ -1080,12 +1161,6 @@ export function bindWorkspaceInteractions(
 
   const onKeyDown = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement;
-    const modifier = event.ctrlKey || event.metaKey;
-    if (modifier && event.key.toLowerCase() === 'f') {
-      event.preventDefault();
-      openSearch(target);
-      return;
-    }
 
     const editor = target.closest<HTMLInputElement>('[data-node-editor]');
 
@@ -1138,7 +1213,7 @@ export function bindWorkspaceInteractions(
     } else if (canvasFocused && key === 'f') {
       event.preventDefault();
       focusCanvasTarget(state.selectionId);
-    } else if (modifier && key === 'z') {
+    } else if ((event.ctrlKey || event.metaKey) && key === 'z') {
       event.preventDefault();
       const nextState = event.shiftKey ? workflow.redo() : workflow.undo();
       renderFocused(nextState);
@@ -1160,6 +1235,9 @@ export function bindWorkspaceInteractions(
       renderFocused(workflow.navigate('right'));
     } else if (event.key === ' ') {
       event.preventDefault();
+      if (state.selectionId && handleManualSearchCollapse(state.selectionId)) {
+        return;
+      }
       clearSearchExpanded(state.selectionId ?? undefined);
       renderFocused(workflow.toggleCollapse(state.selectionId));
     } else if (event.key === 'Delete') {
@@ -1185,6 +1263,18 @@ export function bindWorkspaceInteractions(
     }
   };
 
+  const onGlobalKeyDown = (event: KeyboardEvent): void => {
+    if (searchDialog?.contains(event.target as Node)) {
+      return;
+    }
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      const trigger = event.target instanceof HTMLElement ? event.target : workspace;
+      openSearch(trigger);
+    }
+  };
+
   workspace.addEventListener('click', onClick);
   workspace.addEventListener('dblclick', onDoubleClick);
   workspace.addEventListener('contextmenu', onContextMenu);
@@ -1197,6 +1287,7 @@ export function bindWorkspaceInteractions(
   workspace.addEventListener('input', onInput);
   workspace.addEventListener('wheel', onWheel, { passive: false });
   workspace.addEventListener('change', onFileInputChange);
+  document.addEventListener('keydown', onGlobalKeyDown);
   document.addEventListener('pointerdown', onDocumentPointerDown);
   document.addEventListener('fullscreenchange', onFullscreenChange);
   window.addEventListener('resize', onViewportResize);
@@ -1217,6 +1308,7 @@ export function bindWorkspaceInteractions(
     workspace.removeEventListener('input', onInput);
     workspace.removeEventListener('wheel', onWheel);
     workspace.removeEventListener('change', onFileInputChange);
+    document.removeEventListener('keydown', onGlobalKeyDown);
     document.removeEventListener('pointerdown', onDocumentPointerDown);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
     window.removeEventListener('resize', onViewportResize);

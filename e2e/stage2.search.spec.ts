@@ -19,8 +19,8 @@ test('searches current document titles and cycles through matching results', asy
   const searchButton = page.getByRole('button', { name: '搜尋', exact: true });
   await searchButton.click();
 
-  const dialog = page.getByRole('dialog', { name: '搜尋' });
-  const input = dialog.getByRole('textbox', { name: '搜尋節點標題' });
+  let dialog = page.getByRole('dialog', { name: '搜尋' });
+  let input = dialog.getByRole('textbox', { name: '搜尋節點標題' });
   await expect(input).toBeFocused();
 
   await input.fill('alpha');
@@ -38,9 +38,19 @@ test('searches current document titles and cycles through matching results', asy
   await expect(dialog.getByText('0 / 0')).toBeVisible();
   await expect(dialog.getByText('找不到符合的節點')).toBeVisible();
 
-  await dialog.getByRole('button', { name: '關閉', exact: true }).click();
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+F' : 'Control+F');
+  await page.getByRole('button', { name: /復原/ }).click();
+  await input.press('Escape');
+  await expect(searchButton).toBeFocused();
+
+  await searchButton.click();
+  dialog = page.getByRole('dialog', { name: '搜尋' });
+  input = dialog.getByRole('textbox', { name: '搜尋節點標題' });
+  await input.press('Escape');
+  await page.getByLabel('介面主題').focus();
+  await page.keyboard.press('Control+F');
   await expect(page.getByRole('dialog', { name: '搜尋' }).getByRole('textbox', { name: '搜尋節點標題' })).toBeFocused();
+
+  await page.keyboard.press('Escape');
 });
 
 test('temporarily reveals collapsed matches and refreshes results after title changes', async ({ page }) => {
@@ -70,6 +80,8 @@ test('temporarily reveals collapsed matches and refreshes results after title ch
   await expect(branch.locator('xpath=ancestor::li[@data-node-id][1]')).toHaveAttribute('aria-expanded', 'true');
   await dialog.getByRole('button', { name: '關閉', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Hidden Alpha', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '收合 Branch', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Hidden Alpha', exact: true })).toBeHidden();
 
   await page.waitForTimeout(700);
   await page.reload();
