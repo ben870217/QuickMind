@@ -19,3 +19,22 @@ export function findNodeTitleMatches(root: QuickMindNode, query: string): QuickM
   visit(root);
   return matches;
 }
+
+export function findNodeAncestorIds(root: QuickMindNode, nodeId: string): string[] {
+  const visit = (node: QuickMindNode, ancestors: string[]): string[] | null => {
+    if (node.id === nodeId) {
+      return ancestors;
+    }
+
+    for (const child of node.children) {
+      const found = visit(child, [...ancestors, node.id]);
+      if (found) {
+        return found;
+      }
+    }
+
+    return null;
+  };
+
+  return visit(root, []) ?? [];
+}

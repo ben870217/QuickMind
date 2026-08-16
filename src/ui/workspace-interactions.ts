@@ -7,7 +7,7 @@ import {
   takeUserVisibleCharacters,
   type QuickMindNode,
 } from '../domain/document';
-import { findNodeTitleMatches } from '../domain/document-search';
+import { findNodeAncestorIds, findNodeTitleMatches } from '../domain/document-search';
 import {
   createQuickMindFilename,
   parseQuickMindDocument,
@@ -36,6 +36,9 @@ export function bindWorkspaceInteractions(
   let searchQuery = '';
   let searchIndex = -1;
   let searchOpen = false;
+  let renderAndRefreshSearch = (): void => {
+    render();
+  };
   const minimumZoom = 0.5;
   const maximumZoom = 2;
   const maximumPan = 2_000;
@@ -124,8 +127,10 @@ export function bindWorkspaceInteractions(
   };
 
   const renderFocused = (state: ReturnType<DocumentWorkflow['getState']>): void => {
-    render();
-    focusNode(state.selectionId);
+    renderAndRefreshSearch();
+    if (!searchOpen) {
+      focusNode(state.selectionId);
+    }
   };
 
   const selectNodeInPlace = (nodeId: string | null, shouldFocus = true): void => {
@@ -178,13 +183,66 @@ export function bindWorkspaceInteractions(
     target?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
   };
 
-  const recalculateSearchResults = (): void => {
+  const getSearchExpandedNodeIds = (): Set<string> => {
+    const encoded = workspace.dataset.searchExpanded;
+    if (!encoded) {
+      return new Set();
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(encoded);
+      return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+    } catch {
+      return new Set();
+    }
+  };
+
+  const addSearchAncestors = (nodeId: string): boolean => {
+    const expanded = getSearchExpandedNodeIds();
+    const next = new Set(expanded);
+    findNodeAncestorIds(workflow.getState().document.root, nodeId).forEach((ancestorId) => next.add(ancestorId));
+    if (next.size === expanded.size && [...next].every((id) => expanded.has(id))) {
+      return false;
+    }
+
+    workspace.dataset.searchExpanded = JSON.stringify([...next]);
+    return true;
+  };
+
+  const clearSearchExpanded = (nodeId?: string): void => {
+    if (!nodeId) {
+      delete workspace.dataset.searchExpanded;
+      return;
+    }
+
+    const expanded = getSearchExpandedNodeIds();
+    if (!expanded.delete(nodeId)) {
+      return;
+    }
+    if (expanded.size === 0) {
+      delete workspace.dataset.searchExpanded;
+    } else {
+      workspace.dataset.searchExpanded = JSON.stringify([...expanded]);
+    }
+  };
+
+  const revealSearchMatch = (nodeId: string): void => {
+    if (addSearchAncestors(nodeId)) {
+      render();
+    }
+    selectNodeInPlace(nodeId, false);
+    scrollToSearchMatch(nodeId);
+  };
+
+  const recalculateSearchResults = (preserveRemovedIndex = false): void => {
     const previousMatchId = searchMatches[searchIndex]?.id ?? null;
+    const previousIndex = searchIndex;
     searchMatches = findNodeTitleMatches(workflow.getState().document.root, searchQuery);
 
     if (searchQuery.length === 0) {
       searchIndex = -1;
       updateSearchDialog();
+      searchInput?.focus();
       return;
     }
 
@@ -192,17 +250,22 @@ export function bindWorkspaceInteractions(
       searchIndex = -1;
       selectNodeInPlace(null, false);
       updateSearchDialog();
+      searchInput?.focus();
       return;
     }
 
     const preservedIndex = previousMatchId
       ? searchMatches.findIndex((match) => match.id === previousMatchId)
       : -1;
-    searchIndex = preservedIndex >= 0 ? preservedIndex : 0;
+    searchIndex = preservedIndex >= 0
+      ? preservedIndex
+      : preserveRemovedIndex && previousIndex >= 0
+        ? Math.min(previousIndex, searchMatches.length - 1)
+        : 0;
     const match = searchMatches[searchIndex];
-    selectNodeInPlace(match.id, false);
-    scrollToSearchMatch(match.id);
+    revealSearchMatch(match.id);
     updateSearchDialog();
+    searchInput?.focus();
   };
 
   const moveSearchResult = (direction: 1 | -1): void => {
@@ -212,8 +275,7 @@ export function bindWorkspaceInteractions(
 
     searchIndex = (searchIndex + direction + searchMatches.length) % searchMatches.length;
     const match = searchMatches[searchIndex];
-    selectNodeInPlace(match.id, false);
-    scrollToSearchMatch(match.id);
+    revealSearchMatch(match.id);
     updateSearchDialog();
     searchInput?.focus();
   };
@@ -337,6 +399,13 @@ export function bindWorkspaceInteractions(
     searchInput?.focus();
   };
 
+  renderAndRefreshSearch = (): void => {
+    render();
+    if (searchOpen) {
+      recalculateSearchResults(true);
+    }
+  };
+
   const updateTitleCounter = (editor: HTMLInputElement): void => {
     const counter = editor.parentElement?.querySelector<HTMLElement>('[data-title-count]');
     if (counter) {
@@ -364,24 +433,29 @@ export function bindWorkspaceInteractions(
 
     if (action === 'add-child') {
       workflow.addChild(nodeId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     } else if (action === 'add-sibling') {
       workflow.addSibling(nodeId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     } else if (action === 'rename') {
       workflow.beginEditing(nodeId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     } else if (action === 'delete') {
       workflow.deleteNode(nodeId);
-      render();
-      focusNode(workflow.getState().selectionId);
+      renderAndRefreshSearch();
+      if (!searchOpen) {
+        focusNode(workflow.getState().selectionId);
+      }
     } else if (action === 'collapse') {
+      clearSearchExpanded(nodeId);
       workflow.toggleCollapse(nodeId);
-      render();
-      focusNode(nodeId);
+      renderAndRefreshSearch();
+      if (!searchOpen) {
+        focusNode(nodeId);
+      }
     }
   };
 
@@ -472,7 +546,7 @@ export function bindWorkspaceInteractions(
     const persistenceAction = target.closest<HTMLButtonElement>('[data-persistence-action]');
     if (persistenceAction?.dataset.persistenceAction === 'retry') {
       workflow.retrySave();
-      render();
+      renderAndRefreshSearch();
       showFileMessage('正在重試保存本機工作副本。');
       return;
     }
@@ -500,7 +574,8 @@ export function bindWorkspaceInteractions(
         }
 
         void workflow.clearDocument().then((nextState) => {
-          render();
+          clearSearchExpanded();
+          renderAndRefreshSearch();
           showFileMessage(
             nextState.persistence === 'error' ? '清除後的新文件未保存到本機。' : '已清除並建立新的本機文件。',
             nextState.persistence === 'error' ? 'save-failed' : undefined,
@@ -521,6 +596,7 @@ export function bindWorkspaceInteractions(
 
     const collapseButton = target.closest<HTMLButtonElement>('[data-collapse-node]');
     if (collapseButton) {
+      clearSearchExpanded(collapseButton.dataset.collapseNode);
       renderFocused(workflow.toggleCollapse(collapseButton.dataset.collapseNode ?? null));
       return;
     }
@@ -549,7 +625,7 @@ export function bindWorkspaceInteractions(
     }
 
     workflow.beginEditing(node.dataset.nodeId ?? '');
-    render();
+    renderAndRefreshSearch();
     focusEditor();
   };
 
@@ -570,7 +646,7 @@ export function bindWorkspaceInteractions(
 
     event.preventDefault();
     workflow.selectNode(nodeId);
-    render();
+    renderAndRefreshSearch();
     openContextMenu(nodeId, event.clientX, event.clientY);
   };
 
@@ -709,7 +785,7 @@ export function bindWorkspaceInteractions(
       return false;
     }
 
-    render();
+    renderAndRefreshSearch();
     return true;
   };
 
@@ -726,7 +802,7 @@ export function bindWorkspaceInteractions(
       if (!rescue) {
         workflow.markExported();
       }
-      render();
+      renderAndRefreshSearch();
       showFileMessage(rescue ? '已匯出救援檔案；本機保存警告仍然存在。' : '已匯出 QuickMind 原生檔案。');
     } catch (error) {
       const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'export-failed';
@@ -748,7 +824,7 @@ export function bindWorkspaceInteractions(
     try {
       const artifact = options.createArtifact();
       downloadTextFile(artifact.source, artifact.filename, artifact.mimeType);
-      render();
+      renderAndRefreshSearch();
       showFileMessage(options.successMessage);
     } catch (error) {
       const detail = error instanceof QuickMindFormatError
@@ -787,7 +863,7 @@ export function bindWorkspaceInteractions(
     void createPngArtifact(documentSnapshot)
       .then((artifact) => {
         downloadArtifact(artifact.data, artifact.filename, artifact.mimeType);
-        render();
+        renderAndRefreshSearch();
         showFileMessage('已匯出 PNG 圖片。');
       })
       .catch((error: unknown) => {
@@ -819,9 +895,10 @@ export function bindWorkspaceInteractions(
       const document = parseQuickMindDocument(await file.text());
       const changed = workflow.replaceDocument(document);
       if (changed) {
+        clearSearchExpanded();
         setCanvasView({ zoom: 1, panX: 0, panY: 0 });
       }
-      render();
+      renderAndRefreshSearch();
       showFileMessage(changed ? '已匯入 QuickMind 原生檔案。' : '匯入內容與目前文件相同，未產生變更。');
     } catch (error) {
       const detail = error instanceof QuickMindFormatError ? describeFormatError(error) : 'import-failed';
@@ -924,8 +1001,10 @@ export function bindWorkspaceInteractions(
     const movedNodeId = draggingNodeId;
     workflow.moveNode(movedNodeId, targetId, position);
     clearDropIndicator();
-    render();
-    focusNode(movedNodeId);
+    renderAndRefreshSearch();
+    if (!searchOpen) {
+      focusNode(movedNodeId);
+    }
   };
 
   const onFileInputChange = (event: Event): void => {
@@ -1013,7 +1092,7 @@ export function bindWorkspaceInteractions(
         if (committed) {
           renderFocused(workflow.getState());
         } else if (workflow.getState().limitError) {
-          render();
+          renderAndRefreshSearch();
           focusEditor();
         }
       } else if (event.key === 'Escape') {
@@ -1073,6 +1152,7 @@ export function bindWorkspaceInteractions(
       renderFocused(workflow.navigate('right'));
     } else if (event.key === ' ') {
       event.preventDefault();
+      clearSearchExpanded(state.selectionId ?? undefined);
       renderFocused(workflow.toggleCollapse(state.selectionId));
     } else if (event.key === 'Delete') {
       event.preventDefault();
@@ -1082,17 +1162,17 @@ export function bindWorkspaceInteractions(
     } else if (event.key === 'Enter') {
       event.preventDefault();
       workflow.addSibling(state.selectionId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     } else if (event.key === 'Tab') {
       event.preventDefault();
       workflow.addChild(state.selectionId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     } else if (event.key === 'F2') {
       event.preventDefault();
       workflow.beginEditing(state.selectionId);
-      render();
+      renderAndRefreshSearch();
       focusEditor();
     }
   };

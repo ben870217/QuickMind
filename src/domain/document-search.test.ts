@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { QuickMindNode } from './document';
-import { findNodeTitleMatches } from './document-search';
+import { findNodeAncestorIds, findNodeTitleMatches } from './document-search';
 
 function node(id: string, text: string, children: QuickMindNode[] = [], isCollapsed = false): QuickMindNode {
   return { id, text, children, isCollapsed };
@@ -25,5 +25,14 @@ describe('findNodeTitleMatches', () => {
 
   it('returns no matches for an empty query', () => {
     expect(findNodeTitleMatches(node('root', 'Root'), '')).toEqual([]);
+  });
+
+  it('returns ancestors in root-to-parent order for a descendant match', () => {
+    const root = node('root', 'Root', [
+      node('branch', 'Branch', [node('leaf', 'Leaf')]),
+    ]);
+
+    expect(findNodeAncestorIds(root, 'leaf')).toEqual(['root', 'branch']);
+    expect(findNodeAncestorIds(root, 'missing')).toEqual([]);
   });
 });
