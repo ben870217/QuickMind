@@ -7,12 +7,15 @@ test('serves a base-path-safe standalone manifest and native install affordance'
     display: string;
     start_url: string;
     scope: string;
-    icons: Array<{ src: string }>;
+    icons: Array<{ src: string; sizes: string; type: string }>;
   };
   expect(manifest.display).toBe('standalone');
   expect(manifest.start_url).toBe('.');
   expect(manifest.scope).toBe('.');
-  expect(manifest.icons[0]?.src).toBe('icon.svg');
+  expect(manifest.icons).toEqual([
+    { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+  ]);
 
   await page.goto('/');
   const installButton = page.getByRole('button', { name: '安裝 QuickMind', exact: true });
