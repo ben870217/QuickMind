@@ -32,6 +32,7 @@ export function renderWorkspace(container: HTMLElement, state: WorkspaceState): 
       <div class="workspace-toolbar">
         <button class="history-button" type="button" data-history-action="undo" aria-label="復原（Ctrl／⌘+Z）" aria-keyshortcuts="Control+Z Meta+Z" title="復原（Ctrl／⌘+Z）"${state.canUndo ? '' : ' disabled'}>↶ 復原</button>
         <button class="history-button" type="button" data-history-action="redo" aria-label="重做（Ctrl／⌘+Shift+Z）" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" title="重做（Ctrl／⌘+Shift+Z）"${state.canRedo ? '' : ' disabled'}>↷ 重做</button>
+        <button class="file-button" type="button" data-search-action="open" aria-keyshortcuts="Control+F Meta+F" title="搜尋節點標題">搜尋</button>
         <button class="file-button" type="button" data-file-action="import" title="匯入 QuickMind 原生檔案"${importLocked ? ' disabled' : ''}>匯入 .quickmind</button>
         <button class="file-button" type="button" data-file-action="export" title="${importLocked ? '匯出救援檔案' : '匯出 QuickMind 原生檔案'}">${exportButtonLabel}</button>
         <button class="file-button" type="button" data-file-action="export-png" title="匯出 PNG 圖片">匯出 PNG</button>

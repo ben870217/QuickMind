@@ -5,7 +5,9 @@ import {
   MAX_NODE_TITLE_LENGTH,
   normalizeNodeTitle,
   takeUserVisibleCharacters,
+  type QuickMindNode,
 } from '../domain/document';
+import { findNodeTitleMatches } from '../domain/document-search';
 import {
   createQuickMindFilename,
   parseQuickMindDocument,
@@ -27,6 +29,13 @@ export function bindWorkspaceInteractions(
   let contextMenu: HTMLElement | null = null;
   let contextMenuNodeId: string | null = null;
   let draggingNodeId: string | null = null;
+  let searchDialog: HTMLElement | null = null;
+  let searchInput: HTMLInputElement | null = null;
+  let searchTrigger: HTMLElement | null = null;
+  let searchMatches: QuickMindNode[] = [];
+  let searchQuery = '';
+  let searchIndex = -1;
+  let searchOpen = false;
   const minimumZoom = 0.5;
   const maximumZoom = 2;
   const maximumPan = 2_000;
@@ -119,13 +128,213 @@ export function bindWorkspaceInteractions(
     focusNode(state.selectionId);
   };
 
-  const selectNodeInPlace = (nodeId: string | null): void => {
+  const selectNodeInPlace = (nodeId: string | null, shouldFocus = true): void => {
     const state = workflow.selectNode(nodeId);
     workspace.querySelectorAll<HTMLElement>('[data-node-id]').forEach((node) => {
       node.setAttribute('aria-selected', node.dataset.nodeId === state.selectionId ? 'true' : 'false');
     });
     refreshConnections();
-    focusNode(state.selectionId);
+    if (shouldFocus) {
+      focusNode(state.selectionId);
+    }
+  };
+
+  const getSearchFocusableElements = (): HTMLElement[] => {
+    const candidates: Array<HTMLElement | null> = [
+    searchInput,
+    searchDialog?.querySelector<HTMLButtonElement>('[data-search-action="previous"]') ?? null,
+    searchDialog?.querySelector<HTMLButtonElement>('[data-search-action="next"]') ?? null,
+    searchDialog?.querySelector<HTMLButtonElement>('[data-search-action="close"]') ?? null,
+    ];
+    return candidates.filter((element): element is HTMLElement => Boolean(element && !element.hidden && !element.hasAttribute('disabled')));
+  };
+
+  const updateSearchDialog = (): void => {
+    if (!searchDialog) {
+      return;
+    }
+
+    const count = searchDialog.querySelector<HTMLElement>('[data-search-count]');
+    const emptyMessage = searchDialog.querySelector<HTMLElement>('[data-search-empty]');
+    const previousButton = searchDialog.querySelector<HTMLButtonElement>('[data-search-action="previous"]');
+    const nextButton = searchDialog.querySelector<HTMLButtonElement>('[data-search-action="next"]');
+    if (count) {
+      count.textContent = `${searchIndex >= 0 ? searchIndex + 1 : 0} / ${searchMatches.length}`;
+    }
+    if (emptyMessage) {
+      emptyMessage.hidden = searchQuery.length === 0 || searchMatches.length > 0;
+    }
+    if (previousButton) {
+      previousButton.disabled = searchMatches.length === 0;
+    }
+    if (nextButton) {
+      nextButton.disabled = searchMatches.length === 0;
+    }
+  };
+
+  const scrollToSearchMatch = (nodeId: string): void => {
+    const target = Array.from(workspace.querySelectorAll<HTMLElement>('[data-node-id]'))
+      .find((candidate) => candidate.dataset.nodeId === nodeId);
+    target?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+  };
+
+  const recalculateSearchResults = (): void => {
+    const previousMatchId = searchMatches[searchIndex]?.id ?? null;
+    searchMatches = findNodeTitleMatches(workflow.getState().document.root, searchQuery);
+
+    if (searchQuery.length === 0) {
+      searchIndex = -1;
+      updateSearchDialog();
+      return;
+    }
+
+    if (searchMatches.length === 0) {
+      searchIndex = -1;
+      selectNodeInPlace(null, false);
+      updateSearchDialog();
+      return;
+    }
+
+    const preservedIndex = previousMatchId
+      ? searchMatches.findIndex((match) => match.id === previousMatchId)
+      : -1;
+    searchIndex = preservedIndex >= 0 ? preservedIndex : 0;
+    const match = searchMatches[searchIndex];
+    selectNodeInPlace(match.id, false);
+    scrollToSearchMatch(match.id);
+    updateSearchDialog();
+  };
+
+  const moveSearchResult = (direction: 1 | -1): void => {
+    if (searchMatches.length === 0) {
+      return;
+    }
+
+    searchIndex = (searchIndex + direction + searchMatches.length) % searchMatches.length;
+    const match = searchMatches[searchIndex];
+    selectNodeInPlace(match.id, false);
+    scrollToSearchMatch(match.id);
+    updateSearchDialog();
+    searchInput?.focus();
+  };
+
+  const closeSearch = (): void => {
+    if (!searchOpen) {
+      return;
+    }
+
+    const resultNodeId = searchIndex >= 0 ? searchMatches[searchIndex]?.id ?? null : null;
+    const trigger = searchTrigger;
+    searchOpen = false;
+    searchDialog?.remove();
+    searchDialog = null;
+    searchInput = null;
+    searchMatches = [];
+    searchQuery = '';
+    searchIndex = -1;
+    searchTrigger = null;
+
+    if (resultNodeId) {
+      focusNode(resultNodeId);
+    } else if (trigger?.isConnected) {
+      trigger.focus();
+    } else {
+      focusNode(workflow.getState().selectionId);
+    }
+  };
+
+  const onSearchDialogKeyDown = (event: KeyboardEvent): void => {
+    if (!searchOpen) {
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSearch();
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      const focusable = getSearchFocusableElements();
+      if (focusable.length === 0) {
+        return;
+      }
+
+      const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+      const nextIndex = event.shiftKey
+        ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
+        : (currentIndex < 0 || currentIndex === focusable.length - 1 ? 0 : currentIndex + 1);
+      event.preventDefault();
+      focusable[nextIndex]?.focus();
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveSearchResult(event.shiftKey ? -1 : 1);
+    } else if (event.key === 'ArrowUp' || (event.key === 'Enter' && event.shiftKey)) {
+      event.preventDefault();
+      moveSearchResult(-1);
+    }
+  };
+
+  const onSearchDialogInput = (event: Event): void => {
+    const input = event.target as HTMLInputElement;
+    if (input !== searchInput) {
+      return;
+    }
+
+    searchQuery = input.value;
+    recalculateSearchResults();
+  };
+
+  const onSearchDialogClick = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement;
+    const action = target.closest<HTMLButtonElement>('[data-search-action]')?.dataset.searchAction;
+    if (action === 'previous') {
+      moveSearchResult(-1);
+    } else if (action === 'next') {
+      moveSearchResult(1);
+    } else if (action === 'close') {
+      closeSearch();
+    }
+  };
+
+  const openSearch = (trigger: HTMLElement): void => {
+    if (searchOpen) {
+      searchInput?.focus();
+      return;
+    }
+
+    searchOpen = true;
+    searchTrigger = trigger;
+    searchQuery = '';
+    searchMatches = [];
+    searchIndex = -1;
+    searchDialog = document.createElement('section');
+    searchDialog.className = 'search-dialog';
+    searchDialog.dataset.searchDialog = 'true';
+    searchDialog.setAttribute('role', 'dialog');
+    searchDialog.setAttribute('aria-labelledby', 'search-dialog-title');
+    searchDialog.innerHTML = `
+      <h2 id="search-dialog-title">搜尋</h2>
+      <label class="search-label" for="search-node-title">搜尋節點標題</label>
+      <input id="search-node-title" class="search-input" type="text" data-search-input aria-label="搜尋節點標題" autocomplete="off" />
+      <p class="search-count" data-search-count aria-live="polite">0 / 0</p>
+      <p class="search-empty" data-search-empty role="status" hidden>找不到符合的節點</p>
+      <div class="search-actions">
+        <button class="file-button" type="button" data-search-action="previous">上一筆</button>
+        <button class="file-button" type="button" data-search-action="next">下一筆</button>
+        <button class="file-button" type="button" data-search-action="close">關閉</button>
+      </div>
+    `;
+    searchInput = searchDialog.querySelector<HTMLInputElement>('[data-search-input]');
+    searchDialog.addEventListener('keydown', onSearchDialogKeyDown);
+    searchDialog.addEventListener('input', onSearchDialogInput);
+    searchDialog.addEventListener('click', onSearchDialogClick);
+    document.body.append(searchDialog);
+    updateSearchDialog();
+    searchInput?.focus();
   };
 
   const updateTitleCounter = (editor: HTMLInputElement): void => {
@@ -248,6 +457,12 @@ export function bindWorkspaceInteractions(
 
   const onClick = (event: MouseEvent): void => {
     const target = event.target as HTMLElement;
+    const searchAction = target.closest<HTMLButtonElement>('[data-search-action="open"]');
+    if (searchAction) {
+      openSearch(searchAction);
+      return;
+    }
+
     const canvasAction = target.closest<HTMLButtonElement>('[data-canvas-action]');
     if (canvasAction?.dataset.canvasAction === 'fullscreen') {
       void toggleFullscreen();
@@ -778,6 +993,13 @@ export function bindWorkspaceInteractions(
 
   const onKeyDown = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement;
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      openSearch(target);
+      return;
+    }
+
     const editor = target.closest<HTMLInputElement>('[data-node-editor]');
 
     if (editor) {
@@ -813,7 +1035,6 @@ export function bindWorkspaceInteractions(
     }
 
     const state = workflow.getState();
-    const modifier = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
     const canvasFocused = Boolean(target.closest('[data-canvas]')) || target === workspace;
     if (canvasFocused && (event.key === '+' || event.key === '=')) {
@@ -895,6 +1116,7 @@ export function bindWorkspaceInteractions(
 
   return () => {
     closeContextMenu(false);
+    closeSearch();
     workspace.removeEventListener('click', onClick);
     workspace.removeEventListener('dblclick', onDoubleClick);
     workspace.removeEventListener('contextmenu', onContextMenu);
