@@ -149,4 +149,17 @@ test('keeps search focus contained and preserves editor state across shortcut op
   await input.press('Escape');
   await expect(editor).toBeFocused();
   await expect(editor).toHaveValue('Uncommitted Alpha');
+
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Tab');
+  const newEditor = page.locator('[data-node-editor]');
+  await newEditor.fill('New Uncommitted Alpha');
+  await newEditor.press('Control+F');
+  dialog = page.getByRole('dialog', { name: '搜尋' });
+  input = dialog.getByRole('textbox', { name: '搜尋節點標題' });
+  await input.fill('committed');
+  await expect(dialog.getByText('1 / 1')).toBeVisible();
+  await input.press('Escape');
+  await expect(newEditor).toBeFocused();
+  await expect(newEditor).toHaveValue('New Uncommitted Alpha');
 });

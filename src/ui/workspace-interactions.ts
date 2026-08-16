@@ -230,6 +230,9 @@ export function bindWorkspaceInteractions(
     if (addSearchAncestors(nodeId)) {
       render();
     }
+    if (workflow.getState().editing) {
+      return;
+    }
     selectNodeInPlace(nodeId, false);
     scrollToSearchMatch(nodeId);
   };
@@ -248,7 +251,9 @@ export function bindWorkspaceInteractions(
 
     if (searchMatches.length === 0) {
       searchIndex = -1;
-      selectNodeInPlace(null, false);
+      if (!workflow.getState().editing) {
+        selectNodeInPlace(null, false);
+      }
       updateSearchDialog();
       searchInput?.focus();
       return;
@@ -269,7 +274,7 @@ export function bindWorkspaceInteractions(
   };
 
   const moveSearchResult = (direction: 1 | -1): void => {
-    if (searchMatches.length === 0) {
+    if (searchMatches.length === 0 || workflow.getState().editing) {
       return;
     }
 
@@ -285,6 +290,7 @@ export function bindWorkspaceInteractions(
       return;
     }
 
+    const editing = Boolean(workflow.getState().editing);
     const resultNodeId = searchIndex >= 0 ? searchMatches[searchIndex]?.id ?? null : null;
     const trigger = searchTrigger;
     searchOpen = false;
@@ -296,7 +302,9 @@ export function bindWorkspaceInteractions(
     searchIndex = -1;
     searchTrigger = null;
 
-    if (resultNodeId) {
+    if (editing) {
+      focusEditor();
+    } else if (resultNodeId) {
       focusNode(resultNodeId);
     } else if (trigger?.isConnected) {
       trigger.focus();
