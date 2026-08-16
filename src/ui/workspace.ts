@@ -187,10 +187,10 @@ export function renderWorkspaceConnections(container: HTMLElement, state: Worksp
   layer.innerHTML = `
     <defs>
       <marker id="quickmind-connection-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
-        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="#776158"></path>
+        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="var(--qm-connection)"></path>
       </marker>
       <marker id="quickmind-connection-arrow-emphasized" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
-        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="#5c7e6b"></path>
+        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="var(--qm-connection-emphasis)"></path>
       </marker>
     </defs>
     ${paths.join('')}

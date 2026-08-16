@@ -280,11 +280,11 @@ export function bindWorkspaceInteractions(
   };
 
   const revealSearchMatch = (nodeId: string): void => {
-    if (addSearchAncestors(nodeId)) {
-      render();
-    }
     if (workflow.getState().editing) {
       return;
+    }
+    if (addSearchAncestors(nodeId)) {
+      render();
     }
     selectNodeInPlace(nodeId, false);
     scrollToSearchMatch(nodeId);
@@ -304,7 +304,12 @@ export function bindWorkspaceInteractions(
 
     if (searchMatches.length === 0) {
       searchIndex = -1;
-      if (!workflow.getState().editing) {
+      const editing = workflow.getState().editing;
+      if (editing?.isNew) {
+        workspace.querySelectorAll<HTMLElement>('[data-node-id]').forEach((node) => {
+          node.setAttribute('aria-selected', 'false');
+        });
+      } else {
         selectNodeInPlace(null, false);
       }
       updateSearchDialog();
@@ -661,6 +666,7 @@ export function bindWorkspaceInteractions(
 
         void workflow.clearDocument().then((nextState) => {
           clearSearchExpanded();
+          manuallyCollapsedSearchNodeIds.clear();
           renderAndRefreshSearch();
           showFileMessage(
             nextState.persistence === 'error' ? '清除後的新文件未保存到本機。' : '已清除並建立新的本機文件。',
@@ -985,6 +991,7 @@ export function bindWorkspaceInteractions(
       const changed = workflow.replaceDocument(document);
       if (changed) {
         clearSearchExpanded();
+        manuallyCollapsedSearchNodeIds.clear();
         setCanvasView({ zoom: 1, panX: 0, panY: 0 });
       }
       renderAndRefreshSearch();

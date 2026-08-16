@@ -163,6 +163,7 @@ test('keeps search focus contained and preserves editor state across shortcut op
   await expect(editor).toHaveValue('Uncommitted Alpha');
 
   await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Committed Alpha', exact: true }).click();
   await page.keyboard.press('Tab');
   const newEditor = page.locator('[data-node-editor]');
   await newEditor.fill('New Uncommitted Alpha');
