@@ -14,6 +14,7 @@ export function renderAppShell(): string {
               <option value="dark">Dark</option>
             </select>
           </label>
+          <button class="file-button install-button" type="button" data-install-action="prompt" hidden>安裝 QuickMind</button>
           <p class="app-status" data-app-status role="status">準備中</p>
         </div>
       </header>
